@@ -1,6 +1,6 @@
 # 六开关打地鼠显示（初版）
 
-当前版本：`v0.5.0`。完整功能变更与代码位置见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`v0.5.1`。完整功能变更与代码位置见 [CHANGELOG.md](CHANGELOG.md)。
 
 这个初版程序会读取 Arduino Mega 2560 以 115200 波特率发送的六位状态，并显示一个可缩放的 2 列 × 3 行方格区。界面采用 Qt（PySide6），可在当前 macOS 和 Windows 上运行。
 
