@@ -1,6 +1,6 @@
 # 六开关打地鼠显示（初版）
 
-当前版本：`v0.4.0`。完整功能变更与代码位置见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`v0.5.0`。完整功能变更与代码位置见 [CHANGELOG.md](CHANGELOG.md)。
 
 这个初版程序会读取 Arduino Mega 2560 以 115200 波特率发送的六位状态，并显示一个可缩放的 2 列 × 3 行方格区。界面采用 Qt（PySide6），可在当前 macOS 和 Windows 上运行。
 
@@ -59,6 +59,12 @@ py mole_game.py
 ## 不接开发板时的模拟测试
 
 `serial_signal_simulator.py` 是独立的串口发送程序。启动后选择一个**发送端**串口并点击“开始模拟”，它会立刻发送一帧，之后每秒随机发送一帧：恰好一位为 `1`，其余五位为 `0`，格式与 Arduino 输出相同。相邻两帧的 `1` 不会落在同一位，保证每秒切换位置。
+
+也可无界面运行（`--count 0` 表示持续发送，按 `Ctrl+C` 停止）：
+
+```powershell
+.\.venv\Scripts\python.exe .\serial_signal_simulator.py --headless --port COM10 --interval-ms 1000 --count 0
+```
 
 若要让 `mole_game.py` 读取模拟器的输出，Windows 上需要一对互连的虚拟串口（例如 `COM10` 与 `COM11`）：
 

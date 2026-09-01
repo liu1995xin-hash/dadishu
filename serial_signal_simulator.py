@@ -11,8 +11,10 @@ receiver end in ``mole_game.py``.
 
 from __future__ import annotations
 
+import argparse
 import random
 import sys
+import time
 
 try:
     import serial
@@ -38,6 +40,42 @@ except ImportError as exc:
 BAUD_RATE = 115200
 CHANNEL_COUNT = 6
 FRAME_INTERVAL_MS = 1000
+
+
+def next_random_frame(last_hit_index: int | None) -> tuple[list[int], int]:
+    """Return one six-value frame whose hit position differs from the prior one."""
+    choices = [index for index in range(CHANNEL_COUNT) if index != last_hit_index]
+    hit_index = random.choice(choices)
+    values = [0] * CHANNEL_COUNT
+    values[hit_index] = 1
+    return values, hit_index
+
+
+def run_headless(port: str, interval_ms: int, count: int) -> None:
+    """Write random frames without creating a Qt window; count=0 runs until Ctrl+C."""
+    if interval_ms <= 0:
+        raise ValueError("发送间隔必须大于 0 ms。")
+    if count < 0:
+        raise ValueError("发送帧数不能小于 0。")
+
+    print(f"无界面模拟已启动：{port}，{BAUD_RATE} 波特，每 {interval_ms} ms 发送一帧。")
+    last_hit_index: int | None = None
+    sent = 0
+    try:
+        with serial.Serial(port, BAUD_RATE, write_timeout=1) as connection:
+            while count == 0 or sent < count:
+                values, last_hit_index = next_random_frame(last_hit_index)
+                frame = " ".join(map(str, values))
+                connection.write(f"{frame}\n".encode("ascii"))
+                connection.flush()
+                sent += 1
+                print(f"已发送 {sent}: {frame}（第 {last_hit_index + 1} 位为 1）")
+                if count == 0 or sent < count:
+                    time.sleep(interval_ms / 1000)
+    except KeyboardInterrupt:
+        print("模拟已由用户停止。")
+    except (serial.SerialException, OSError) as exc:
+        raise SystemExit(f"串口错误：{exc}") from exc
 
 
 class SerialSignalSimulatorWindow(QMainWindow):
@@ -120,11 +158,8 @@ class SerialSignalSimulatorWindow(QMainWindow):
         if self.connection is None:
             return
 
-        choices = [index for index in range(CHANNEL_COUNT) if index != self.last_hit_index]
-        hit_index = random.choice(choices)
+        values, hit_index = next_random_frame(self.last_hit_index)
         self.last_hit_index = hit_index
-        values = [0] * CHANNEL_COUNT
-        values[hit_index] = 1
         frame = " ".join(map(str, values))
 
         try:
@@ -152,6 +187,19 @@ class SerialSignalSimulatorWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="六路打地鼠串口信号模拟器")
+    parser.add_argument("--headless", action="store_true", help="不打开窗口，直接向指定串口发送模拟帧")
+    parser.add_argument("--port", help="无界面模式的发送端串口，例如 COM10")
+    parser.add_argument("--interval-ms", type=int, default=FRAME_INTERVAL_MS, help="发送间隔毫秒数，默认 1000")
+    parser.add_argument("--count", type=int, default=0, help="发送帧数；0 表示持续发送，默认 0")
+    arguments = parser.parse_args()
+
+    if arguments.headless:
+        if not arguments.port:
+            parser.error("--headless 必须同时指定 --port。")
+        run_headless(arguments.port, arguments.interval_ms, arguments.count)
+        raise SystemExit(0)
+
     application = QApplication(sys.argv)
     window = SerialSignalSimulatorWindow()
     window.show()

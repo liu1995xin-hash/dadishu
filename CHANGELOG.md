@@ -2,6 +2,13 @@
 
 本项目从 `v0.4.0` 起使用 Git 管理。每次功能变更应同时更新本文件、README 中的用户行为说明，并提交一个独立 Git 提交。
 
+## v0.5.0 — 无界面串口模拟
+
+- `serial_signal_simulator.py` 新增 `--headless` 模式，可不打开 Qt 窗口直接向指定串口发送随机六位帧。
+- 新增 `--port`、`--interval-ms` 与 `--count` 参数；模拟器图形界面与无界面模式使用同一套随机帧生成逻辑。
+
+对应代码：`serial_signal_simulator.py` 的 `next_random_frame()`、`run_headless()` 与命令行参数入口。
+
 ## v0.4.0 — 可配置分数与结果状态（当前版本）
 
 - 初始分数下拉框：10～100 分，每 10 分一档，默认 10 分。
