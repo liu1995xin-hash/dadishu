@@ -58,18 +58,8 @@ MATERIAL_SCORES = {
     "大麻叶": -20,
 }
 
-
-def find_yellow_scutellaria_asset() -> Path:
-    """Use the sole non-bad-herb PNG in 素材 as the user-confirmed 黄芩 image."""
-    excluded = {"罂粟花.png", "大麻叶.png"}
-    candidates = [path for path in ASSET_DIRECTORY.glob("*.png") if path.name not in excluded]
-    if len(candidates) != 1:
-        raise RuntimeError("素材目录必须恰好包含一张黄芩图片以及罂粟花和大麻叶图片。")
-    return candidates[0]
-
-
 MATERIAL_FILES = {
-    "黄芩": find_yellow_scutellaria_asset(),
+    "黄芩": ASSET_DIRECTORY / "黄芩.png",
     "罂粟花": ASSET_DIRECTORY / "罂粟花.png",
     "大麻叶": ASSET_DIRECTORY / "大麻叶.png",
 }
