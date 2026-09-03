@@ -10,15 +10,17 @@ signal keeps its corresponding square black for HIT_DISPLAY_MS milliseconds.
 from __future__ import annotations
 
 import queue
+import random
 import sys
 import threading
 import time
+from pathlib import Path
 
 try:
     import serial
     from serial.tools import list_ports
-    from PySide6.QtCore import Qt, QTimer
-    from PySide6.QtGui import QKeySequence, QShortcut
+    from PySide6.QtCore import QEasingCurve, QRect, QPropertyAnimation, QSequentialAnimationGroup, Qt, QTimer
+    from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -39,7 +41,6 @@ except ImportError as exc:
 
 BAUD_RATE = 115200
 CHANNEL_COUNT = 6
-HIT_DISPLAY_MS = 1000
 HIT_SIGNAL = 1  # COM -> GND and NC -> Dx: released=0, struck/pressed=1
 DEFAULT_INITIAL_SCORE = 10
 DEFAULT_WINNING_SCORE = 30
@@ -47,6 +48,31 @@ INITIAL_SCORE_OPTIONS = range(10, 101, 10)
 WINNING_SCORE_OPTIONS = range(30, 201, 10)
 GAME_OVER_SCORE = 0
 VICTORY_DISPLAY_MS = 1000
+TARGET_SPAWN_MS = 2000
+TARGET_DISPLAY_MS = 4000
+HIT_SCALE_DURATION_MS = 500
+ASSET_DIRECTORY = Path(__file__).with_name("素材")
+MATERIAL_SCORES = {
+    "黄芩": 5,
+    "罂粟花": -5,
+    "大麻叶": -20,
+}
+
+
+def find_yellow_scutellaria_asset() -> Path:
+    """Use the sole non-bad-herb PNG in 素材 as the user-confirmed 黄芩 image."""
+    excluded = {"罂粟花.png", "大麻叶.png"}
+    candidates = [path for path in ASSET_DIRECTORY.glob("*.png") if path.name not in excluded]
+    if len(candidates) != 1:
+        raise RuntimeError("素材目录必须恰好包含一张黄芩图片以及罂粟花和大麻叶图片。")
+    return candidates[0]
+
+
+MATERIAL_FILES = {
+    "黄芩": find_yellow_scutellaria_asset(),
+    "罂粟花": ASSET_DIRECTORY / "罂粟花.png",
+    "大麻叶": ASSET_DIRECTORY / "大麻叶.png",
+}
 
 
 class SerialReader(threading.Thread):
@@ -99,12 +125,18 @@ class SquareGrid(QWidget):
         self.setMinimumSize(280, 420)
         self.setStyleSheet("background: white;")
         self.tiles: list[QFrame] = []
-        self.hit_until = [0.0] * CHANNEL_COUNT
+        self.asset_labels: list[QLabel] = []
+        self.asset_animations: list[QSequentialAnimationGroup | None] = [None] * CHANNEL_COUNT
 
         for _index in range(CHANNEL_COUNT):
             tile = QFrame(self)
             tile.setStyleSheet("background: white;")
             self.tiles.append(tile)
+            asset_label = QLabel(tile)
+            asset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            asset_label.setStyleSheet("background: transparent;")
+            asset_label.hide()
+            self.asset_labels.append(asset_label)
 
         # One border surrounds the complete 2 x 3 area; individual tiles have none.
         self.outer_border = QFrame(self)
@@ -116,22 +148,51 @@ class SquareGrid(QWidget):
         )
         self.message_label.hide()
 
-    def register_frame(self, values: list[int]) -> None:
-        now = time.monotonic()
-        for index, value in enumerate(values):
-            # The Arduino sends 1 when an impact opens the NC contact.
-            if value == HIT_SIGNAL:
-                self.hit_until[index] = now + HIT_DISPLAY_MS / 1000
+    def asset_rect(self, index: int, scale: float = 1.0) -> QRect:
+        tile = self.tiles[index]
+        side = max(int(min(tile.width(), tile.height()) * 0.72 * scale), 1)
+        return QRect((tile.width() - side) // 2, (tile.height() - side) // 2, side, side)
 
-    def refresh_colours(self) -> None:
-        now = time.monotonic()
-        for index, tile in enumerate(self.tiles):
-            colour = "black" if now < self.hit_until[index] else "white"
-            tile.setStyleSheet(f"background: {colour};")
+    def show_asset(self, index: int, image_path: Path) -> None:
+        pixmap = QPixmap(str(image_path))
+        if pixmap.isNull():
+            raise ValueError(f"无法加载素材图片：{image_path}")
+        label = self.asset_labels[index]
+        label.setPixmap(pixmap)
+        label.setGeometry(self.asset_rect(index))
+        label.show()
+        label.raise_()
 
-    def clear_hits(self) -> None:
-        self.hit_until = [0.0] * CHANNEL_COUNT
-        self.refresh_colours()
+    def clear_asset(self, index: int) -> None:
+        animation = self.asset_animations[index]
+        if animation is not None:
+            animation.stop()
+            self.asset_animations[index] = None
+        self.asset_labels[index].hide()
+        self.asset_labels[index].clear()
+
+    def clear_all_assets(self) -> None:
+        for index in range(CHANNEL_COUNT):
+            self.clear_asset(index)
+
+    def animate_hit(self, index: int, on_finished) -> None:  # type: ignore[no-untyped-def]
+        label = self.asset_labels[index]
+        animation = QSequentialAnimationGroup(self)
+        enlarge = QPropertyAnimation(label, b"geometry", animation)
+        enlarge.setDuration(HIT_SCALE_DURATION_MS)
+        enlarge.setStartValue(self.asset_rect(index))
+        enlarge.setEndValue(self.asset_rect(index, 1.2))
+        enlarge.setEasingCurve(QEasingCurve.Type.OutQuad)
+        shrink = QPropertyAnimation(label, b"geometry", animation)
+        shrink.setDuration(HIT_SCALE_DURATION_MS)
+        shrink.setStartValue(self.asset_rect(index, 1.2))
+        shrink.setEndValue(self.asset_rect(index))
+        shrink.setEasingCurve(QEasingCurve.Type.InQuad)
+        animation.addAnimation(enlarge)
+        animation.addAnimation(shrink)
+        animation.finished.connect(on_finished)
+        self.asset_animations[index] = animation
+        animation.start()
 
     def show_message(self, message: str) -> None:
         self.message_label.setText(message)
@@ -163,6 +224,8 @@ class SquareGrid(QWidget):
                 side,
                 side,
             )
+            if self.asset_animations[index] is None:
+                self.asset_labels[index].setGeometry(self.asset_rect(index))
         self.outer_border.setGeometry(left, top, grid_width, grid_height)
         self.outer_border.raise_()
         self.message_label.setGeometry(self.rect())
@@ -184,21 +247,27 @@ class MoleGameWindow(QMainWindow):
         self.game_active = False
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
+        self.targets: list[str | None] = [None] * CHANNEL_COUNT
+        self.target_expiry_timers: list[QTimer] = []
         self._build_ui()
         self.refresh_ports()
 
         self.message_timer = QTimer(self)
         self.message_timer.timeout.connect(self.process_messages)
         self.message_timer.start(20)
-        self.render_timer = QTimer(self)
-        self.render_timer.timeout.connect(self.grid.refresh_colours)
-        self.render_timer.start(20)
         self.victory_timer = QTimer(self)
         self.victory_timer.setSingleShot(True)
         self.victory_timer.timeout.connect(self.reset_to_ready)
         self.space_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
         self.space_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.space_shortcut.activated.connect(self.handle_spacebar)
+        self.spawn_timer = QTimer(self)
+        self.spawn_timer.timeout.connect(self.spawn_target)
+        for index in range(CHANNEL_COUNT):
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda index=index: self.expire_target(index))
+            self.target_expiry_timers.append(timer)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -303,7 +372,7 @@ class MoleGameWindow(QMainWindow):
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
         self.game_active = True
-        self.grid.clear_hits()
+        self.clear_all_targets()
         self.grid.hide_message()
         self.score_label.setText(f"{self.score}分")
         self.score_label.show()
@@ -311,12 +380,14 @@ class MoleGameWindow(QMainWindow):
         self.end_button.setEnabled(True)
         self.initial_score_box.setEnabled(False)
         self.winning_score_box.setEnabled(False)
+        self.spawn_target()
+        self.spawn_timer.start(TARGET_SPAWN_MS)
 
     def end_game(self) -> None:
         self.game_active = False
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
-        self.grid.clear_hits()
+        self.clear_all_targets()
         self.score_label.hide()
         self.start_button.setEnabled(True)
         self.end_button.setEnabled(False)
@@ -329,7 +400,7 @@ class MoleGameWindow(QMainWindow):
         self.game_active = False
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
-        self.grid.clear_hits()
+        self.clear_all_targets()
         self.score_label.hide()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(False)
@@ -343,7 +414,7 @@ class MoleGameWindow(QMainWindow):
         self.game_active = False
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
-        self.grid.clear_hits()
+        self.clear_all_targets()
         self.score_label.hide()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(False)
@@ -358,7 +429,7 @@ class MoleGameWindow(QMainWindow):
         self.winning_score = int(self.winning_score_box.currentData())
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
-        self.grid.clear_hits()
+        self.clear_all_targets()
         self.grid.hide_message()
         self.score_label.hide()
         self.start_button.setEnabled(True)
@@ -374,13 +445,52 @@ class MoleGameWindow(QMainWindow):
             self.awaiting_first_frame = False
             return
 
-        self.grid.register_frame(values)
-        for previous, current in zip(self.previous_values, values):
+        for index, (previous, current) in enumerate(zip(self.previous_values, values)):
             if previous != HIT_SIGNAL and current == HIT_SIGNAL:
-                self.adjust_score(1)
+                self.hit_target(index)
                 if not self.game_active:
                     break
         self.previous_values = values
+
+    def spawn_target(self) -> None:
+        if not self.game_active:
+            return
+        empty_indices = [index for index, target in enumerate(self.targets) if target is None]
+        if not empty_indices:
+            return
+        index = random.choice(empty_indices)
+        material = random.choice(list(MATERIAL_FILES))
+        self.targets[index] = material
+        self.grid.show_asset(index, MATERIAL_FILES[material])
+        self.target_expiry_timers[index].start(TARGET_DISPLAY_MS)
+
+    def expire_target(self, index: int) -> None:
+        if self.targets[index] is None:
+            return
+        self.targets[index] = None
+        self.grid.clear_asset(index)
+
+    def hit_target(self, index: int) -> None:
+        material = self.targets[index]
+        if material is None:
+            return
+        self.targets[index] = None
+        self.target_expiry_timers[index].stop()
+        score_change = MATERIAL_SCORES[material]
+
+        def complete_hit() -> None:
+            self.grid.clear_asset(index)
+            if self.game_active:
+                self.adjust_score(score_change)
+
+        self.grid.animate_hit(index, complete_hit)
+
+    def clear_all_targets(self) -> None:
+        self.spawn_timer.stop()
+        for timer in self.target_expiry_timers:
+            timer.stop()
+        self.targets = [None] * CHANNEL_COUNT
+        self.grid.clear_all_assets()
 
     def handle_spacebar(self) -> None:
         if self.game_active:

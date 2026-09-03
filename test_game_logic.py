@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import os
-import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 
-from mole_game import CHANNEL_COUNT, HIT_SIGNAL, MoleGameWindow, SerialReader
+from mole_game import CHANNEL_COUNT, HIT_SIGNAL, MATERIAL_FILES, MoleGameWindow, SerialReader
 from serial_signal_simulator import next_random_frame
 
 
@@ -28,6 +28,11 @@ class MoleGameLogicTests(unittest.TestCase):
     def start_with_zero_baseline(self) -> None:
         self.window.start_game()
         self.window.register_game_frame([0] * CHANNEL_COUNT)
+
+    def put_target(self, index: int, material: str) -> None:
+        self.window.target_expiry_timers[index].stop()
+        self.window.targets[index] = material
+        self.window.grid.show_asset(index, MATERIAL_FILES[material])
 
     def test_frame_parser_rejects_incomplete_and_invalid_input(self) -> None:
         self.assertEqual(SerialReader.parse_frame("0 1 0 0 0 1"), [0, 1, 0, 0, 0, 1])
@@ -47,25 +52,44 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.start_game()
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
         self.assertEqual(self.window.score, 10)
-        self.assertEqual(self.window.grid.hit_until[0], 0.0)
+        self.assertTrue(any(target is not None for target in self.window.targets))
 
-    def test_only_rising_edges_score_and_refresh_the_visual_hit(self) -> None:
+    def test_only_rising_edges_score_a_target_once(self) -> None:
         self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "黄芩")
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
-        self.assertEqual(self.window.score, 11)
-        self.assertGreater(self.window.grid.hit_until[0], time.monotonic())
+        self.assertIsNone(self.window.targets[0])
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
-        self.assertEqual(self.window.score, 11)
         self.window.register_game_frame([0, 0, 0, 0, 0, 0])
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
-        self.assertEqual(self.window.score, 12)
+        QTest.qWait(1100)
+        self.assertEqual(self.window.score, 15)
 
-    def test_visual_hit_returns_to_white_after_its_window(self) -> None:
+    def test_empty_cell_hit_does_not_change_score_or_show_an_asset(self) -> None:
         self.start_with_zero_baseline()
+        self.window.clear_all_targets()
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
-        self.window.grid.hit_until[0] = time.monotonic() - 0.01
-        self.window.grid.refresh_colours()
-        self.assertIn("background: white", self.window.grid.tiles[0].styleSheet())
+        self.assertEqual(self.window.score, 10)
+        self.assertFalse(self.window.grid.asset_labels[0].isVisible())
+
+    def test_target_expiry_and_full_grid_skip(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        for index in range(CHANNEL_COUNT):
+            self.put_target(index, "黄芩")
+        before = list(self.window.targets)
+        self.window.spawn_target()
+        self.assertEqual(self.window.targets, before)
+        self.window.expire_target(0)
+        self.assertIsNone(self.window.targets[0])
+        self.assertFalse(self.window.grid.asset_labels[0].isVisible())
+
+    def test_end_state_clears_all_targets_immediately(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.end_game()
+        self.assertEqual(self.window.targets, [None] * CHANNEL_COUNT)
+        self.assertTrue(all(not label.isVisible() for label in self.window.grid.asset_labels))
 
     def test_manual_end_ignores_future_frames_and_space_starts_again(self) -> None:
         self.start_with_zero_baseline()
