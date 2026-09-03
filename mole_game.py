@@ -53,13 +53,21 @@ TARGET_DISPLAY_MS = 4000
 HIT_SCALE_DURATION_MS = 500
 ASSET_DIRECTORY = Path(__file__).with_name("素材")
 MATERIAL_SCORES = {
-    "黄芩": 5,
-    "罂粟花": -5,
-    "大麻叶": -20,
+    "黄芩": 10,
+    "黄芩(1)": 10,
+    "丹参": 10,
+    "青蒿": 10,
+    "紫苏": 10,
+    "大麻叶": -5,
 }
+INSTANT_FAILURE_MATERIALS = {"罂粟花"}
 
 MATERIAL_FILES = {
     "黄芩": ASSET_DIRECTORY / "黄芩.png",
+    "黄芩(1)": ASSET_DIRECTORY / "黄芩(1).png",
+    "丹参": ASSET_DIRECTORY / "丹参.png",
+    "青蒿": ASSET_DIRECTORY / "青蒿.png",
+    "紫苏": ASSET_DIRECTORY / "紫苏.png",
     "罂粟花": ASSET_DIRECTORY / "罂粟花.png",
     "大麻叶": ASSET_DIRECTORY / "大麻叶.png",
 }
@@ -466,6 +474,9 @@ class MoleGameWindow(QMainWindow):
             return
         self.targets[index] = None
         self.target_expiry_timers[index].stop()
+        if material in INSTANT_FAILURE_MATERIALS:
+            self.finish_failure()
+            return
         score_change = MATERIAL_SCORES[material]
 
         def complete_hit() -> None:

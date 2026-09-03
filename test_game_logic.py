@@ -10,7 +10,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 
-from mole_game import CHANNEL_COUNT, HIT_SIGNAL, MATERIAL_FILES, MoleGameWindow, SerialReader
+from mole_game import (
+    CHANNEL_COUNT,
+    HIT_SIGNAL,
+    MATERIAL_FILES,
+    MATERIAL_SCORES,
+    MoleGameWindow,
+    SerialReader,
+)
 from serial_signal_simulator import next_random_frame
 
 
@@ -48,6 +55,12 @@ class MoleGameLogicTests(unittest.TestCase):
             self.assertNotEqual(hit, last_hit)
             last_hit = hit
 
+    def test_all_configured_material_images_exist(self) -> None:
+        self.assertTrue(all(path.exists() for path in MATERIAL_FILES.values()))
+        for material in ("黄芩", "黄芩(1)", "丹参", "青蒿", "紫苏"):
+            self.assertEqual(MATERIAL_SCORES[material], 10)
+        self.assertEqual(MATERIAL_SCORES["大麻叶"], -5)
+
     def test_first_frame_is_only_a_baseline(self) -> None:
         self.window.start_game()
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
@@ -64,7 +77,24 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.register_game_frame([0, 0, 0, 0, 0, 0])
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
         QTest.qWait(1100)
-        self.assertEqual(self.window.score, 15)
+        self.assertEqual(self.window.score, 20)
+
+    def test_poppy_hit_causes_immediate_failure(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "罂粟花")
+        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.assertFalse(self.window.game_active)
+        self.assertEqual(self.window.grid.message_label.text(), "游戏失败")
+        self.assertTrue(all(target is None for target in self.window.targets))
+
+    def test_hemp_target_subtracts_five_after_animation(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "大麻叶")
+        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        QTest.qWait(1100)
+        self.assertEqual(self.window.score, 5)
 
     def test_empty_cell_hit_does_not_change_score_or_show_an_asset(self) -> None:
         self.start_with_zero_baseline()
