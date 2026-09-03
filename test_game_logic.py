@@ -57,9 +57,17 @@ class MoleGameLogicTests(unittest.TestCase):
 
     def test_all_configured_material_images_exist(self) -> None:
         self.assertTrue(all(path.exists() for path in MATERIAL_FILES.values()))
-        for material in ("黄芩", "黄芩(1)", "丹参", "青蒿", "紫苏"):
+        for material in ("黄芩", "丹参", "青蒿", "紫苏"):
             self.assertEqual(MATERIAL_SCORES[material], 10)
         self.assertEqual(MATERIAL_SCORES["大麻叶"], -5)
+
+    def test_asset_is_stretched_to_fill_its_tile(self) -> None:
+        self.window.show()
+        QTest.qWait(20)
+        self.window.grid.show_asset(0, MATERIAL_FILES["黄芩"])
+        label = self.window.grid.asset_labels[0]
+        self.assertTrue(label.hasScaledContents())
+        self.assertEqual(label.geometry(), self.window.grid.asset_rect(0))
 
     def test_first_frame_is_only_a_baseline(self) -> None:
         self.window.start_game()

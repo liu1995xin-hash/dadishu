@@ -54,7 +54,6 @@ HIT_SCALE_DURATION_MS = 500
 ASSET_DIRECTORY = Path(__file__).with_name("素材")
 MATERIAL_SCORES = {
     "黄芩": 10,
-    "黄芩(1)": 10,
     "丹参": 10,
     "青蒿": 10,
     "紫苏": 10,
@@ -64,7 +63,6 @@ INSTANT_FAILURE_MATERIALS = {"罂粟花"}
 
 MATERIAL_FILES = {
     "黄芩": ASSET_DIRECTORY / "黄芩.png",
-    "黄芩(1)": ASSET_DIRECTORY / "黄芩(1).png",
     "丹参": ASSET_DIRECTORY / "丹参.png",
     "青蒿": ASSET_DIRECTORY / "青蒿.png",
     "紫苏": ASSET_DIRECTORY / "紫苏.png",
@@ -132,6 +130,7 @@ class SquareGrid(QWidget):
             self.tiles.append(tile)
             asset_label = QLabel(tile)
             asset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            asset_label.setScaledContents(True)
             asset_label.setStyleSheet("background: transparent;")
             asset_label.hide()
             self.asset_labels.append(asset_label)
@@ -148,8 +147,9 @@ class SquareGrid(QWidget):
 
     def asset_rect(self, index: int, scale: float = 1.0) -> QRect:
         tile = self.tiles[index]
-        side = max(int(min(tile.width(), tile.height()) * 0.72 * scale), 1)
-        return QRect((tile.width() - side) // 2, (tile.height() - side) // 2, side, side)
+        width = max(int(tile.width() * scale), 1)
+        height = max(int(tile.height() * scale), 1)
+        return QRect((tile.width() - width) // 2, (tile.height() - height) // 2, width, height)
 
     def show_asset(self, index: int, image_path: Path) -> None:
         pixmap = QPixmap(str(image_path))
