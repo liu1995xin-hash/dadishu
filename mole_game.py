@@ -10,6 +10,7 @@ signal keeps its corresponding square black for HIT_DISPLAY_MS milliseconds.
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import random
@@ -58,6 +59,8 @@ GAME_OVER_SCORE = 0
 VICTORY_DISPLAY_MS = 1000
 DEFAULT_TARGET_SPAWN_INTERVAL_MS = 2000
 TARGET_SPAWN_INTERVAL_OPTIONS_MS = range(500, 5001, 500)
+DEFAULT_GAME_DURATION_SECONDS = 30
+GAME_DURATION_OPTIONS_SECONDS = range(20, 61, 10)
 TARGET_DISPLAY_MS = 4000
 HIT_SCALE_DURATION_MS = 300
 ASSET_DIRECTORY = Path(__file__).with_name("素材")
@@ -170,6 +173,7 @@ class SquareGrid(QWidget):
         self.setStyleSheet("background: white;")
         self.tiles: list[ClickableTile] = []
         self.asset_labels: list[QLabel] = []
+        self.score_change_labels: list[QLabel] = []
         self.asset_animations: list[QSequentialAnimationGroup | None] = [None] * CHANNEL_COUNT
 
         for _index in range(CHANNEL_COUNT):
@@ -184,6 +188,14 @@ class SquareGrid(QWidget):
             asset_label.setStyleSheet("background: transparent;")
             asset_label.hide()
             self.asset_labels.append(asset_label)
+            score_change_label = QLabel(tile)
+            score_change_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            score_change_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            score_change_label.setStyleSheet(
+                "background: transparent; color: #15803d; font-size: 32px; font-weight: bold;"
+            )
+            score_change_label.hide()
+            self.score_change_labels.append(score_change_label)
 
         # One border surrounds the complete 2 x 3 area; individual tiles have none.
         self.outer_border = QFrame(self)
@@ -221,9 +233,26 @@ class SquareGrid(QWidget):
         self.asset_labels[index].hide()
         self.asset_labels[index].clear()
 
+    def show_score_change(self, index: int, change: int) -> None:
+        """Show the non-terminal score change over the struck target."""
+        label = self.score_change_labels[index]
+        label.setText(f"{change:+d}分")
+        color = "#15803d" if change > 0 else "#b91c1c"
+        label.setStyleSheet(
+            f"background: transparent; color: {color}; font-size: 32px; font-weight: bold;"
+        )
+        label.setGeometry(self.tiles[index].rect())
+        label.show()
+        label.raise_()
+
+    def clear_score_change(self, index: int) -> None:
+        self.score_change_labels[index].hide()
+        self.score_change_labels[index].clear()
+
     def clear_all_assets(self) -> None:
         for index in range(CHANNEL_COUNT):
             self.clear_asset(index)
+            self.clear_score_change(index)
 
     def animate_hit(self, index: int, on_finished) -> None:  # type: ignore[no-untyped-def]
         label = self.asset_labels[index]
@@ -276,6 +305,7 @@ class SquareGrid(QWidget):
             )
             if self.asset_animations[index] is None:
                 self.asset_labels[index].setGeometry(self.asset_rect(index))
+            self.score_change_labels[index].setGeometry(tile.rect())
         self.outer_border.setGeometry(left, top, grid_width, grid_height)
         self.outer_border.raise_()
         self.message_label.setGeometry(self.rect())
@@ -299,6 +329,8 @@ class MoleGameWindow(QMainWindow):
         self.score = DEFAULT_INITIAL_SCORE
         self.winning_score = DEFAULT_WINNING_SCORE
         self.active_target_spawn_interval_ms = DEFAULT_TARGET_SPAWN_INTERVAL_MS
+        self.active_game_duration_seconds = DEFAULT_GAME_DURATION_SECONDS
+        self.game_deadline: float | None = None
         self.active_material_scores = dict(MATERIAL_SCORES)
         self.result_state: str | None = None
         self.game_active = False
@@ -313,6 +345,7 @@ class MoleGameWindow(QMainWindow):
         self.refresh_ports()
         self.connect_config_signals()
         self._applying_config = False
+        self.update_countdown_label(int(self.game_duration_box.currentData()))
         self.save_config()
 
         self.message_timer = QTimer(self)
@@ -321,6 +354,9 @@ class MoleGameWindow(QMainWindow):
         self.victory_timer = QTimer(self)
         self.victory_timer.setSingleShot(True)
         self.victory_timer.timeout.connect(self.reset_to_ready)
+        self.countdown_timer = QTimer(self)
+        self.countdown_timer.setInterval(100)
+        self.countdown_timer.timeout.connect(self.update_countdown)
         self.space_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
         self.space_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.space_shortcut.activated.connect(self.handle_spacebar)
@@ -341,9 +377,15 @@ class MoleGameWindow(QMainWindow):
         layout.setSpacing(8)
 
         title_layout = QHBoxLayout()
+        title_text_layout = QVBoxLayout()
+        title_text_layout.setSpacing(0)
+        self.countdown_label = QLabel()
+        self.countdown_label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title_text_layout.addWidget(self.countdown_label)
         title_label = QLabel("药材打地鼠")
         title_label.setStyleSheet("font-size: 26px; font-weight: bold;")
-        title_layout.addWidget(title_label)
+        title_text_layout.addWidget(title_label)
+        title_layout.addLayout(title_text_layout)
         title_layout.addStretch(1)
         self.settings_button = QPushButton("设置 ▼")
         self.settings_button.setCheckable(True)
@@ -383,16 +425,28 @@ class MoleGameWindow(QMainWindow):
             self.winning_score_box.addItem(f"{score}分", score)
         self.winning_score_box.setCurrentText(f"{DEFAULT_WINNING_SCORE}分")
         game_settings.addWidget(self.winning_score_box)
-        game_settings.addWidget(QLabel("生成间隔："))
+        game_settings.addStretch(1)
+        settings_layout.addLayout(game_settings)
+
+        timing_settings = QHBoxLayout()
+        timing_settings.addWidget(QLabel("生成间隔："))
         self.target_spawn_interval_box = CurrentSelectionComboBox()
         for interval_ms in TARGET_SPAWN_INTERVAL_OPTIONS_MS:
             self.target_spawn_interval_box.addItem(f"{interval_ms / 1000:.1f}秒", interval_ms)
         self.target_spawn_interval_box.setCurrentIndex(
             self.target_spawn_interval_box.findData(DEFAULT_TARGET_SPAWN_INTERVAL_MS)
         )
-        game_settings.addWidget(self.target_spawn_interval_box)
-        game_settings.addStretch(1)
-        settings_layout.addLayout(game_settings)
+        timing_settings.addWidget(self.target_spawn_interval_box)
+        timing_settings.addWidget(QLabel("限时时长："))
+        self.game_duration_box = CurrentSelectionComboBox()
+        for duration_seconds in GAME_DURATION_OPTIONS_SECONDS:
+            self.game_duration_box.addItem(f"{duration_seconds}秒", duration_seconds)
+        self.game_duration_box.setCurrentIndex(
+            self.game_duration_box.findData(DEFAULT_GAME_DURATION_SECONDS)
+        )
+        timing_settings.addWidget(self.game_duration_box)
+        timing_settings.addStretch(1)
+        settings_layout.addLayout(timing_settings)
 
         self.material_settings_button = QPushButton("药材分数设置 ▼")
         self.material_settings_button.setCheckable(True)
@@ -468,6 +522,10 @@ class MoleGameWindow(QMainWindow):
                 self.target_spawn_interval_box.findData(target_spawn_interval_ms)
             )
 
+        game_duration_seconds = self.saved_config.get("game_duration_seconds")
+        if type(game_duration_seconds) is int and game_duration_seconds in GAME_DURATION_OPTIONS_SECONDS:
+            self.game_duration_box.setCurrentIndex(self.game_duration_box.findData(game_duration_seconds))
+
         material_scores = self.saved_config.get("material_scores")
         if isinstance(material_scores, dict):
             for material, score_box in self.material_score_boxes.items():
@@ -484,6 +542,7 @@ class MoleGameWindow(QMainWindow):
         self.initial_score_box.currentIndexChanged.connect(self.on_config_changed)
         self.winning_score_box.currentIndexChanged.connect(self.on_config_changed)
         self.target_spawn_interval_box.currentIndexChanged.connect(self.on_config_changed)
+        self.game_duration_box.currentIndexChanged.connect(self.on_config_changed)
         for score_box in self.material_score_boxes.values():
             score_box.currentIndexChanged.connect(self.on_config_changed)
 
@@ -493,6 +552,8 @@ class MoleGameWindow(QMainWindow):
         selected_port = self.port_box.currentText()
         if selected_port:
             self.saved_port = selected_port
+        if not self.game_active:
+            self.update_countdown_label(int(self.game_duration_box.currentData()))
         self.save_config()
 
     def save_config(self) -> None:
@@ -501,6 +562,7 @@ class MoleGameWindow(QMainWindow):
             "initial_score": int(self.initial_score_box.currentData()),
             "winning_score": int(self.winning_score_box.currentData()),
             "target_spawn_interval_ms": int(self.target_spawn_interval_box.currentData()),
+            "game_duration_seconds": int(self.game_duration_box.currentData()),
             "material_scores": {
                 material: int(score_box.currentData())
                 for material, score_box in self.material_score_boxes.items()
@@ -537,8 +599,26 @@ class MoleGameWindow(QMainWindow):
         self.initial_score_box.setEnabled(enabled)
         self.winning_score_box.setEnabled(enabled)
         self.target_spawn_interval_box.setEnabled(enabled)
+        self.game_duration_box.setEnabled(enabled)
         for score_box in self.material_score_boxes.values():
             score_box.setEnabled(enabled)
+
+    def update_countdown_label(self, seconds: int) -> None:
+        self.countdown_label.setText(f"剩余 {seconds}秒")
+
+    def stop_countdown(self) -> None:
+        self.countdown_timer.stop()
+        self.game_deadline = None
+
+    def update_countdown(self) -> None:
+        """Refresh the time display and end the game exactly when time reaches zero."""
+        if not self.game_active or self.game_deadline is None:
+            self.countdown_timer.stop()
+            return
+        remaining_seconds = max(0, math.ceil(self.game_deadline - time.monotonic()))
+        self.update_countdown_label(remaining_seconds)
+        if remaining_seconds == 0:
+            self.end_game(time_expired=True)
 
     def refresh_ports(self) -> None:
         current = self.port_box.currentText() or self.saved_port
@@ -592,6 +672,7 @@ class MoleGameWindow(QMainWindow):
         self.score = initial_score
         self.winning_score = winning_score
         self.active_target_spawn_interval_ms = int(self.target_spawn_interval_box.currentData())
+        self.active_game_duration_seconds = int(self.game_duration_box.currentData())
         self.active_material_scores = {
             material: int(score_box.currentData())
             for material, score_box in self.material_score_boxes.items()
@@ -606,11 +687,15 @@ class MoleGameWindow(QMainWindow):
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(True)
         self.set_game_settings_enabled(False)
+        self.game_deadline = time.monotonic() + self.active_game_duration_seconds
+        self.update_countdown_label(self.active_game_duration_seconds)
+        self.countdown_timer.start()
         self.spawn_target()
         self.spawn_timer.start(self.active_target_spawn_interval_ms)
 
-    def end_game(self) -> None:
+    def end_game(self, time_expired: bool = False) -> None:
         self.game_active = False
+        self.stop_countdown()
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
         self.clear_all_targets()
@@ -618,11 +703,16 @@ class MoleGameWindow(QMainWindow):
         self.start_button.setEnabled(True)
         self.end_button.setEnabled(False)
         self.set_game_settings_enabled(True)
+        if time_expired:
+            self.update_countdown_label(0)
+        else:
+            self.update_countdown_label(int(self.game_duration_box.currentData()))
         self.grid.show_message("游戏结束")
 
     def finish_victory(self) -> None:
         self.result_state = "victory"
         self.game_active = False
+        self.stop_countdown()
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
         self.clear_all_targets()
@@ -636,6 +726,7 @@ class MoleGameWindow(QMainWindow):
     def finish_failure(self) -> None:
         self.result_state = "failure"
         self.game_active = False
+        self.stop_countdown()
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
         self.clear_all_targets()
@@ -648,6 +739,7 @@ class MoleGameWindow(QMainWindow):
 
     def reset_to_ready(self) -> None:
         self.result_state = None
+        self.stop_countdown()
         self.score = int(self.initial_score_box.currentData())
         self.winning_score = int(self.winning_score_box.currentData())
         self.previous_values = [0] * CHANNEL_COUNT
@@ -658,6 +750,7 @@ class MoleGameWindow(QMainWindow):
         self.start_button.setEnabled(True)
         self.end_button.setEnabled(False)
         self.set_game_settings_enabled(True)
+        self.update_countdown_label(int(self.game_duration_box.currentData()))
 
     def register_game_frame(self, values: list[int]) -> None:
         # The first complete frame after starting establishes the released/pressed
@@ -712,9 +805,11 @@ class MoleGameWindow(QMainWindow):
             self.finish_failure()
             return
         self.resolving_target_indices.add(index)
+        self.grid.show_score_change(index, score_change)
 
         def complete_hit() -> None:
             self.grid.clear_asset(index)
+            self.grid.clear_score_change(index)
             self.resolving_target_indices.discard(index)
             if self.game_active:
                 self.adjust_score(score_change)
@@ -768,6 +863,7 @@ class MoleGameWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self.victory_timer.stop()
+        self.stop_countdown()
         self.disconnect()
         event.accept()
 

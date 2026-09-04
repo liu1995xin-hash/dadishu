@@ -17,6 +17,8 @@ from PySide6.QtCore import Qt
 
 from mole_game import (
     CHANNEL_COUNT,
+    DEFAULT_GAME_DURATION_SECONDS,
+    GAME_DURATION_OPTIONS_SECONDS,
     HIT_SIGNAL,
     MATERIAL_FILES,
     MATERIAL_SCORE_OPTIONS,
@@ -101,12 +103,14 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.target_spawn_interval_box.setCurrentIndex(
             self.window.target_spawn_interval_box.findData(3500)
         )
+        self.window.game_duration_box.setCurrentIndex(self.window.game_duration_box.findData(50))
         hemp_box = self.window.material_score_boxes["大麻叶"]
         hemp_box.setCurrentIndex(hemp_box.findData(7))
         saved = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertEqual(saved["initial_score"], 20)
         self.assertEqual(saved["winning_score"], 50)
         self.assertEqual(saved["target_spawn_interval_ms"], 3500)
+        self.assertEqual(saved["game_duration_seconds"], 50)
         self.assertEqual(saved["material_scores"]["大麻叶"], 7)
 
         self.window.close()
@@ -114,6 +118,7 @@ class MoleGameLogicTests(unittest.TestCase):
         self.assertEqual(self.window.initial_score_box.currentData(), 20)
         self.assertEqual(self.window.winning_score_box.currentData(), 50)
         self.assertEqual(self.window.target_spawn_interval_box.currentData(), 3500)
+        self.assertEqual(self.window.game_duration_box.currentData(), 50)
         self.assertEqual(self.window.material_score_boxes["大麻叶"].currentData(), 7)
 
     def test_target_spawn_interval_options_are_saved_and_locked_for_a_game(self) -> None:
@@ -131,6 +136,41 @@ class MoleGameLogicTests(unittest.TestCase):
         self.assertFalse(interval_box.isEnabled())
         self.window.end_game()
         self.assertTrue(interval_box.isEnabled())
+
+    def test_game_duration_options_are_saved_locked_and_displayed_above_the_title(self) -> None:
+        expected_options = [20, 30, 40, 50, 60]
+        self.assertEqual(list(GAME_DURATION_OPTIONS_SECONDS), expected_options)
+        duration_box = self.window.game_duration_box
+        self.assertEqual(
+            [duration_box.itemData(index) for index in range(duration_box.count())],
+            expected_options,
+        )
+        self.assertEqual(duration_box.currentData(), DEFAULT_GAME_DURATION_SECONDS)
+        self.assertEqual(self.window.countdown_label.text(), "剩余 30秒")
+
+        duration_box.setCurrentIndex(duration_box.findData(20))
+        self.assertEqual(self.window.countdown_label.text(), "剩余 20秒")
+        self.window.start_game()
+        self.assertEqual(self.window.active_game_duration_seconds, 20)
+        self.assertTrue(self.window.countdown_timer.isActive())
+        self.assertFalse(duration_box.isEnabled())
+        QTest.qWait(1200)
+        self.assertEqual(self.window.countdown_label.text(), "剩余 19秒")
+        self.window.end_game()
+        self.assertFalse(self.window.countdown_timer.isActive())
+        self.assertTrue(duration_box.isEnabled())
+        self.assertEqual(self.window.countdown_label.text(), "剩余 20秒")
+
+    def test_countdown_expiry_ends_and_clears_the_game(self) -> None:
+        self.start_with_zero_baseline()
+        self.assertTrue(self.window.countdown_timer.isActive())
+        self.window.game_deadline = 0.0
+        self.window.update_countdown()
+        self.assertFalse(self.window.game_active)
+        self.assertFalse(self.window.countdown_timer.isActive())
+        self.assertEqual(self.window.countdown_label.text(), "剩余 0秒")
+        self.assertEqual(self.window.grid.message_label.text(), "游戏结束")
+        self.assertTrue(all(target is None for target in self.window.targets))
 
     def test_opened_setting_dropdown_highlights_and_reveals_its_current_value(self) -> None:
         self.window.show()
@@ -262,6 +302,27 @@ class MoleGameLogicTests(unittest.TestCase):
         QTest.qWait(700)
         self.assertEqual(self.window.score, 5)
         self.assertFalse(self.window.grid.asset_labels[0].isVisible())
+
+    def test_non_terminal_hit_shows_the_score_change_until_its_animation_completes(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "大麻叶")
+        self.window.show()
+        QTest.qWait(20)
+        self.window.handle_tile_click(0)
+        feedback_label = self.window.grid.score_change_labels[0]
+        self.assertTrue(feedback_label.isVisible())
+        self.assertEqual(feedback_label.text(), "-5分")
+        QTest.qWait(700)
+        self.assertFalse(feedback_label.isVisible())
+        self.assertEqual(self.window.score, 5)
+
+    def test_direct_failure_does_not_show_a_score_change(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "罂粟花")
+        self.window.handle_tile_click(0)
+        self.assertFalse(self.window.grid.score_change_labels[0].isVisible())
 
     def test_empty_cell_hit_does_not_change_score_or_show_an_asset(self) -> None:
         self.start_with_zero_baseline()
