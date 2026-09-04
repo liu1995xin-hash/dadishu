@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -194,6 +195,23 @@ class MoleGameLogicTests(unittest.TestCase):
         self.assertTrue(self.window.grid.asset_labels[0].isVisible())
         QTest.qWait(250)
         self.assertFalse(self.window.grid.asset_labels[0].isVisible())
+
+    def test_resolving_tile_cannot_receive_a_new_target_until_its_animation_ends(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "黄芩")
+        self.window.handle_tile_click(0)
+        self.assertIn(0, self.window.resolving_target_indices)
+        with patch("mole_game.random.choice", side_effect=[1, "黄芩"]):
+            self.window.spawn_target()
+        self.assertIsNone(self.window.targets[0])
+        self.assertEqual(self.window.targets[1], "黄芩")
+
+        QTest.qWait(700)
+        self.assertNotIn(0, self.window.resolving_target_indices)
+        with patch("mole_game.random.choice", side_effect=[0, "黄芩"]):
+            self.window.spawn_target()
+        self.assertEqual(self.window.targets[0], "黄芩")
 
     def test_poppy_hit_causes_immediate_failure(self) -> None:
         self.start_with_zero_baseline()

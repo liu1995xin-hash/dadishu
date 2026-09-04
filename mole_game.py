@@ -292,6 +292,7 @@ class MoleGameWindow(QMainWindow):
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
         self.targets: list[str | None] = [None] * CHANNEL_COUNT
+        self.resolving_target_indices: set[int] = set()
         self.target_expiry_timers: list[QTimer] = []
         self._build_ui()
         self.apply_saved_config()
@@ -650,7 +651,11 @@ class MoleGameWindow(QMainWindow):
     def spawn_target(self) -> None:
         if not self.game_active:
             return
-        empty_indices = [index for index, target in enumerate(self.targets) if target is None]
+        empty_indices = [
+            index
+            for index, target in enumerate(self.targets)
+            if target is None and index not in self.resolving_target_indices
+        ]
         if not empty_indices:
             return
         index = random.choice(empty_indices)
@@ -675,9 +680,11 @@ class MoleGameWindow(QMainWindow):
         if score_change == DIRECT_FAILURE_SCORE:
             self.finish_failure()
             return
+        self.resolving_target_indices.add(index)
 
         def complete_hit() -> None:
             self.grid.clear_asset(index)
+            self.resolving_target_indices.discard(index)
             if self.game_active:
                 self.adjust_score(score_change)
 
@@ -688,6 +695,7 @@ class MoleGameWindow(QMainWindow):
         for timer in self.target_expiry_timers:
             timer.stop()
         self.targets = [None] * CHANNEL_COUNT
+        self.resolving_target_indices.clear()
         self.grid.clear_all_assets()
 
     def handle_spacebar(self) -> None:
