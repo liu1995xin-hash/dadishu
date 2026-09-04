@@ -15,6 +15,7 @@ from mole_game import (
     CHANNEL_COUNT,
     HIT_SIGNAL,
     MATERIAL_FILES,
+    MATERIAL_SCORE_OPTIONS,
     MATERIAL_SCORES,
     MoleGameWindow,
     SERIAL_TO_TILE_INDEX,
@@ -78,6 +79,41 @@ class MoleGameLogicTests(unittest.TestCase):
         for material in ("黄芩", "丹参", "青蒿", "紫苏"):
             self.assertEqual(MATERIAL_SCORES[material], 10)
         self.assertEqual(MATERIAL_SCORES["大麻叶"], -5)
+        self.assertEqual(MATERIAL_SCORES["罂粟花"], -999)
+
+    def test_score_settings_are_collapsed_and_expose_the_exact_requested_options(self) -> None:
+        self.assertTrue(self.window.settings_panel.isHidden())
+        self.window.settings_button.click()
+        self.assertFalse(self.window.settings_panel.isHidden())
+        self.assertTrue(self.window.material_settings_panel.isHidden())
+        self.window.material_settings_button.click()
+        self.assertFalse(self.window.material_settings_panel.isHidden())
+        expected_options = [-999, *range(-20, 0), *range(1, 21)]
+        self.assertEqual(list(MATERIAL_SCORE_OPTIONS), expected_options)
+        for score_box in self.window.material_score_boxes.values():
+            self.assertEqual(
+                [score_box.itemData(index) for index in range(score_box.count())],
+                expected_options,
+            )
+
+    def test_material_scores_are_locked_for_a_game_and_read_at_start(self) -> None:
+        score_box = self.window.material_score_boxes["黄芩"]
+        score_box.setCurrentIndex(score_box.findData(-20))
+        self.window.start_game()
+        self.assertEqual(self.window.active_material_scores["黄芩"], -20)
+        self.assertFalse(score_box.isEnabled())
+        self.window.end_game()
+        self.assertTrue(score_box.isEnabled())
+
+    def test_configuring_any_material_as_minus_999_causes_direct_failure(self) -> None:
+        score_box = self.window.material_score_boxes["黄芩"]
+        score_box.setCurrentIndex(score_box.findData(-999))
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "黄芩")
+        self.window.handle_tile_click(0)
+        self.assertFalse(self.window.game_active)
+        self.assertEqual(self.window.grid.message_label.text(), "游戏失败")
 
     def test_asset_is_stretched_to_fill_its_tile(self) -> None:
         self.window.show()

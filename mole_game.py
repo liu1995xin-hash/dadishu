@@ -25,6 +25,7 @@ try:
         QApplication,
         QComboBox,
         QFrame,
+        QGridLayout,
         QHBoxLayout,
         QLabel,
         QMainWindow,
@@ -56,14 +57,16 @@ TARGET_SPAWN_MS = 2000
 TARGET_DISPLAY_MS = 4000
 HIT_SCALE_DURATION_MS = 500
 ASSET_DIRECTORY = Path(__file__).with_name("素材")
+DIRECT_FAILURE_SCORE = -999
+MATERIAL_SCORE_OPTIONS = (DIRECT_FAILURE_SCORE, *range(-20, 0), *range(1, 21))
 MATERIAL_SCORES = {
     "黄芩": 10,
     "丹参": 10,
     "青蒿": 10,
     "紫苏": 10,
+    "罂粟花": DIRECT_FAILURE_SCORE,
     "大麻叶": -5,
 }
-INSTANT_FAILURE_MATERIALS = {"罂粟花"}
 
 MATERIAL_FILES = {
     "黄芩": ASSET_DIRECTORY / "黄芩.png",
@@ -267,6 +270,7 @@ class MoleGameWindow(QMainWindow):
         self.reader: SerialReader | None = None
         self.score = DEFAULT_INITIAL_SCORE
         self.winning_score = DEFAULT_WINNING_SCORE
+        self.active_material_scores = dict(MATERIAL_SCORES)
         self.result_state: str | None = None
         self.game_active = False
         self.previous_values = [0] * CHANNEL_COUNT
@@ -302,18 +306,78 @@ class MoleGameWindow(QMainWindow):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
+        title_layout = QHBoxLayout()
+        title_label = QLabel("药材打地鼠")
+        title_label.setStyleSheet("font-size: 26px; font-weight: bold;")
+        title_layout.addWidget(title_label)
+        title_layout.addStretch(1)
+        self.settings_button = QPushButton("设置 ▼")
+        self.settings_button.setCheckable(True)
+        self.settings_button.toggled.connect(self.toggle_settings_panel)
+        title_layout.addWidget(self.settings_button)
+        layout.addLayout(title_layout)
+
+        self.settings_panel = QFrame()
+        self.settings_panel.setStyleSheet("background: white; border: 1px solid #bdbdbd;")
+        settings_layout = QVBoxLayout(self.settings_panel)
+        settings_layout.setContentsMargins(10, 10, 10, 10)
+        settings_layout.setSpacing(8)
+
         controls = QHBoxLayout()
         controls.addWidget(QLabel("串口："))
         self.port_box = QComboBox()
         self.port_box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         controls.addWidget(self.port_box, 1)
-        refresh_button = QPushButton("刷新")
-        refresh_button.clicked.connect(self.refresh_ports)
-        controls.addWidget(refresh_button)
+        self.refresh_button = QPushButton("刷新")
+        self.refresh_button.clicked.connect(self.refresh_ports)
+        controls.addWidget(self.refresh_button)
         self.connection_button = QPushButton("连接")
         self.connection_button.clicked.connect(self.toggle_connection)
         controls.addWidget(self.connection_button)
-        layout.addLayout(controls)
+        settings_layout.addLayout(controls)
+
+        game_settings = QHBoxLayout()
+        game_settings.addWidget(QLabel("初始分数："))
+        self.initial_score_box = QComboBox()
+        for score in INITIAL_SCORE_OPTIONS:
+            self.initial_score_box.addItem(f"{score}分", score)
+        self.initial_score_box.setCurrentText(f"{DEFAULT_INITIAL_SCORE}分")
+        game_settings.addWidget(self.initial_score_box)
+        game_settings.addWidget(QLabel("胜利分数："))
+        self.winning_score_box = QComboBox()
+        for score in WINNING_SCORE_OPTIONS:
+            self.winning_score_box.addItem(f"{score}分", score)
+        self.winning_score_box.setCurrentText(f"{DEFAULT_WINNING_SCORE}分")
+        game_settings.addWidget(self.winning_score_box)
+        game_settings.addStretch(1)
+        settings_layout.addLayout(game_settings)
+
+        self.material_settings_button = QPushButton("药材分数设置 ▼")
+        self.material_settings_button.setCheckable(True)
+        self.material_settings_button.toggled.connect(self.toggle_material_settings_panel)
+        settings_layout.addWidget(self.material_settings_button)
+
+        self.material_settings_panel = QFrame()
+        self.material_settings_panel.setStyleSheet("background: white;")
+        material_layout = QGridLayout(self.material_settings_panel)
+        material_layout.setContentsMargins(0, 0, 0, 0)
+        material_layout.setHorizontalSpacing(12)
+        material_layout.setVerticalSpacing(6)
+        self.material_score_boxes: dict[str, QComboBox] = {}
+        for index, material in enumerate(MATERIAL_FILES):
+            row = index // 2
+            column = (index % 2) * 2
+            material_layout.addWidget(QLabel(f"{material}："), row, column)
+            score_box = QComboBox()
+            for score in MATERIAL_SCORE_OPTIONS:
+                score_box.addItem(self.material_score_label(score), score)
+            score_box.setCurrentIndex(score_box.findData(MATERIAL_SCORES[material]))
+            material_layout.addWidget(score_box, row, column + 1)
+            self.material_score_boxes[material] = score_box
+        self.material_settings_panel.hide()
+        settings_layout.addWidget(self.material_settings_panel)
+        self.settings_panel.hide()
+        layout.addWidget(self.settings_panel)
 
         game_controls = QHBoxLayout()
         self.start_button = QPushButton("开始游戏")
@@ -323,18 +387,6 @@ class MoleGameWindow(QMainWindow):
         self.end_button.clicked.connect(self.end_game)
         self.end_button.setEnabled(False)
         game_controls.addWidget(self.end_button)
-        game_controls.addWidget(QLabel("初始分数："))
-        self.initial_score_box = QComboBox()
-        for score in INITIAL_SCORE_OPTIONS:
-            self.initial_score_box.addItem(f"{score}分", score)
-        self.initial_score_box.setCurrentText(f"{DEFAULT_INITIAL_SCORE}分")
-        game_controls.addWidget(self.initial_score_box)
-        game_controls.addWidget(QLabel("胜利分数："))
-        self.winning_score_box = QComboBox()
-        for score in WINNING_SCORE_OPTIONS:
-            self.winning_score_box.addItem(f"{score}分", score)
-        self.winning_score_box.setCurrentText(f"{DEFAULT_WINNING_SCORE}分")
-        game_controls.addWidget(self.winning_score_box)
         self.score_label = QLabel()
         self.score_label.setStyleSheet("font-size: 24px; font-weight: bold;")
         self.score_label.hide()
@@ -343,9 +395,30 @@ class MoleGameWindow(QMainWindow):
         layout.addLayout(game_controls)
 
         self.status_label = QLabel("未连接")
+        self.status_label.setStyleSheet("color: #4d4d4d;")
         layout.addWidget(self.status_label)
         self.grid = SquareGrid()
         layout.addWidget(self.grid, 1)
+
+    @staticmethod
+    def material_score_label(score: int) -> str:
+        if score == DIRECT_FAILURE_SCORE:
+            return "-999（直接结束游戏）"
+        return f"{score:+d}分"
+
+    def toggle_settings_panel(self, visible: bool) -> None:
+        self.settings_panel.setVisible(visible)
+        self.settings_button.setText("设置 ▲" if visible else "设置 ▼")
+
+    def toggle_material_settings_panel(self, visible: bool) -> None:
+        self.material_settings_panel.setVisible(visible)
+        self.material_settings_button.setText("药材分数设置 ▲" if visible else "药材分数设置 ▼")
+
+    def set_score_settings_enabled(self, enabled: bool) -> None:
+        self.initial_score_box.setEnabled(enabled)
+        self.winning_score_box.setEnabled(enabled)
+        for score_box in self.material_score_boxes.values():
+            score_box.setEnabled(enabled)
 
     def refresh_ports(self) -> None:
         current = self.port_box.currentText()
@@ -394,6 +467,10 @@ class MoleGameWindow(QMainWindow):
 
         self.score = initial_score
         self.winning_score = winning_score
+        self.active_material_scores = {
+            material: int(score_box.currentData())
+            for material, score_box in self.material_score_boxes.items()
+        }
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
         self.game_active = True
@@ -403,8 +480,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.show()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(True)
-        self.initial_score_box.setEnabled(False)
-        self.winning_score_box.setEnabled(False)
+        self.set_score_settings_enabled(False)
         self.spawn_target()
         self.spawn_timer.start(TARGET_SPAWN_MS)
 
@@ -416,8 +492,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(True)
         self.end_button.setEnabled(False)
-        self.initial_score_box.setEnabled(True)
-        self.winning_score_box.setEnabled(True)
+        self.set_score_settings_enabled(True)
         self.grid.show_message("游戏结束")
 
     def finish_victory(self) -> None:
@@ -429,8 +504,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(False)
-        self.initial_score_box.setEnabled(False)
-        self.winning_score_box.setEnabled(False)
+        self.set_score_settings_enabled(False)
         self.grid.show_message("游戏胜利")
         self.victory_timer.start(VICTORY_DISPLAY_MS)
 
@@ -443,8 +517,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(False)
-        self.initial_score_box.setEnabled(False)
-        self.winning_score_box.setEnabled(False)
+        self.set_score_settings_enabled(False)
         self.grid.show_message("游戏失败")
         self.victory_timer.start(VICTORY_DISPLAY_MS)
 
@@ -459,8 +532,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(True)
         self.end_button.setEnabled(False)
-        self.initial_score_box.setEnabled(True)
-        self.winning_score_box.setEnabled(True)
+        self.set_score_settings_enabled(True)
 
     def register_game_frame(self, values: list[int]) -> None:
         # The first complete frame after starting establishes the released/pressed
@@ -506,10 +578,10 @@ class MoleGameWindow(QMainWindow):
             return
         self.targets[index] = None
         self.target_expiry_timers[index].stop()
-        if material in INSTANT_FAILURE_MATERIALS:
+        score_change = self.active_material_scores[material]
+        if score_change == DIRECT_FAILURE_SCORE:
             self.finish_failure()
             return
-        score_change = MATERIAL_SCORES[material]
 
         def complete_hit() -> None:
             self.grid.clear_asset(index)

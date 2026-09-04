@@ -190,7 +190,7 @@ PySide6_Essentials>=6.8
 |---|---|
 | `SerialReader(threading.Thread)` | 在后台线程打开串口、读取逐行数据、校验协议，并把有效帧放入线程安全队列。UI 不直接阻塞式读取串口。 |
 | `SquareGrid(QWidget)` | 管理 6 个可鼠标点击的 Qt 单元、药材图片、命中特效、中央状态文字，以及 2×3 正方形区域的自定义缩放布局。 |
-| `MoleGameWindow(QMainWindow)` | 建立端口选择、连接/断开、开始/结束（含空格键）、初始/胜利分数选择、得分显示、首帧基准、鼠标模拟命中、胜利延时复位和主窗口生命周期。 |
+| `MoleGameWindow(QMainWindow)` | 建立折叠式设置面板（设备连接、初始/胜利分数、药材分数）、开始/结束（含空格键）、得分显示、首帧基准、鼠标模拟命中、胜利延时复位和主窗口生命周期。 |
 | `messages: queue.Queue` | 后台串口线程与 Qt 主线程间的唯一数据通道。 |
 | `SerialSignalSimulatorWindow(QMainWindow)` | 在独立进程中每秒向发送端串口写入一帧；帧中恰好一位为 `1`。 |
 
