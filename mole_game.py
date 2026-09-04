@@ -25,6 +25,7 @@ try:
     from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
     from PySide6.QtWidgets import (
         QApplication,
+        QAbstractItemView,
         QComboBox,
         QFrame,
         QGridLayout,
@@ -148,6 +149,16 @@ class ClickableTile(QFrame):
             event.accept()
             return
         super().mousePressEvent(event)
+
+
+class CurrentSelectionComboBox(QComboBox):
+    """Always reveal and highlight the selected item when the list opens."""
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        selected_index = self.model().index(self.currentIndex(), 0)
+        self.view().setCurrentIndex(selected_index)
+        self.view().scrollTo(selected_index, QAbstractItemView.ScrollHint.PositionAtCenter)
 
 
 class SquareGrid(QWidget):
@@ -348,7 +359,7 @@ class MoleGameWindow(QMainWindow):
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("串口："))
-        self.port_box = QComboBox()
+        self.port_box = CurrentSelectionComboBox()
         self.port_box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         controls.addWidget(self.port_box, 1)
         self.refresh_button = QPushButton("刷新")
@@ -361,19 +372,19 @@ class MoleGameWindow(QMainWindow):
 
         game_settings = QHBoxLayout()
         game_settings.addWidget(QLabel("初始分数："))
-        self.initial_score_box = QComboBox()
+        self.initial_score_box = CurrentSelectionComboBox()
         for score in INITIAL_SCORE_OPTIONS:
             self.initial_score_box.addItem(f"{score}分", score)
         self.initial_score_box.setCurrentText(f"{DEFAULT_INITIAL_SCORE}分")
         game_settings.addWidget(self.initial_score_box)
         game_settings.addWidget(QLabel("胜利分数："))
-        self.winning_score_box = QComboBox()
+        self.winning_score_box = CurrentSelectionComboBox()
         for score in WINNING_SCORE_OPTIONS:
             self.winning_score_box.addItem(f"{score}分", score)
         self.winning_score_box.setCurrentText(f"{DEFAULT_WINNING_SCORE}分")
         game_settings.addWidget(self.winning_score_box)
         game_settings.addWidget(QLabel("生成间隔："))
-        self.target_spawn_interval_box = QComboBox()
+        self.target_spawn_interval_box = CurrentSelectionComboBox()
         for interval_ms in TARGET_SPAWN_INTERVAL_OPTIONS_MS:
             self.target_spawn_interval_box.addItem(f"{interval_ms / 1000:.1f}秒", interval_ms)
         self.target_spawn_interval_box.setCurrentIndex(
@@ -399,7 +410,7 @@ class MoleGameWindow(QMainWindow):
             row = index // 2
             column = (index % 2) * 2
             material_layout.addWidget(QLabel(f"{material}："), row, column)
-            score_box = QComboBox()
+            score_box = CurrentSelectionComboBox()
             for score in MATERIAL_SCORE_OPTIONS:
                 score_box.addItem(self.material_score_label(score), score)
             score_box.setCurrentIndex(score_box.findData(MATERIAL_SCORES[material]))

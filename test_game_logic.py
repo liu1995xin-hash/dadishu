@@ -132,6 +132,16 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.end_game()
         self.assertTrue(interval_box.isEnabled())
 
+    def test_opened_setting_dropdown_highlights_and_reveals_its_current_value(self) -> None:
+        self.window.show()
+        QTest.qWait(20)
+        score_box = self.window.material_score_boxes["黄芩"]
+        score_box.setCurrentIndex(score_box.findData(20))
+        score_box.showPopup()
+        QTest.qWait(20)
+        self.assertEqual(score_box.view().currentIndex().row(), score_box.currentIndex())
+        score_box.hidePopup()
+
     def test_score_settings_are_collapsed_and_expose_the_exact_requested_options(self) -> None:
         self.assertTrue(self.window.settings_panel.isHidden())
         self.window.settings_button.click()
