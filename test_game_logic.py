@@ -24,6 +24,7 @@ from mole_game import (
     MoleGameWindow,
     SERIAL_TO_TILE_INDEX,
     SerialReader,
+    TARGET_SPAWN_INTERVAL_OPTIONS_MS,
     default_config_path,
 )
 from serial_signal_simulator import next_random_frame
@@ -97,18 +98,39 @@ class MoleGameLogicTests(unittest.TestCase):
         self.assertTrue(self.config_path.exists())
         self.window.initial_score_box.setCurrentIndex(self.window.initial_score_box.findData(20))
         self.window.winning_score_box.setCurrentIndex(self.window.winning_score_box.findData(50))
+        self.window.target_spawn_interval_box.setCurrentIndex(
+            self.window.target_spawn_interval_box.findData(3500)
+        )
         hemp_box = self.window.material_score_boxes["大麻叶"]
         hemp_box.setCurrentIndex(hemp_box.findData(7))
         saved = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertEqual(saved["initial_score"], 20)
         self.assertEqual(saved["winning_score"], 50)
+        self.assertEqual(saved["target_spawn_interval_ms"], 3500)
         self.assertEqual(saved["material_scores"]["大麻叶"], 7)
 
         self.window.close()
         self.window = MoleGameWindow(config_path=self.config_path)
         self.assertEqual(self.window.initial_score_box.currentData(), 20)
         self.assertEqual(self.window.winning_score_box.currentData(), 50)
+        self.assertEqual(self.window.target_spawn_interval_box.currentData(), 3500)
         self.assertEqual(self.window.material_score_boxes["大麻叶"].currentData(), 7)
+
+    def test_target_spawn_interval_options_are_saved_and_locked_for_a_game(self) -> None:
+        expected_options = list(range(500, 5001, 500))
+        self.assertEqual(list(TARGET_SPAWN_INTERVAL_OPTIONS_MS), expected_options)
+        interval_box = self.window.target_spawn_interval_box
+        self.assertEqual(
+            [interval_box.itemData(index) for index in range(interval_box.count())],
+            expected_options,
+        )
+        interval_box.setCurrentIndex(interval_box.findData(500))
+        self.window.start_game()
+        self.assertEqual(self.window.active_target_spawn_interval_ms, 500)
+        self.assertEqual(self.window.spawn_timer.interval(), 500)
+        self.assertFalse(interval_box.isEnabled())
+        self.window.end_game()
+        self.assertTrue(interval_box.isEnabled())
 
     def test_score_settings_are_collapsed_and_expose_the_exact_requested_options(self) -> None:
         self.assertTrue(self.window.settings_panel.isHidden())

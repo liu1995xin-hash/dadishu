@@ -55,7 +55,8 @@ INITIAL_SCORE_OPTIONS = range(10, 101, 10)
 WINNING_SCORE_OPTIONS = range(30, 201, 10)
 GAME_OVER_SCORE = 0
 VICTORY_DISPLAY_MS = 1000
-TARGET_SPAWN_MS = 2000
+DEFAULT_TARGET_SPAWN_INTERVAL_MS = 2000
+TARGET_SPAWN_INTERVAL_OPTIONS_MS = range(500, 5001, 500)
 TARGET_DISPLAY_MS = 4000
 HIT_SCALE_DURATION_MS = 300
 ASSET_DIRECTORY = Path(__file__).with_name("素材")
@@ -286,6 +287,7 @@ class MoleGameWindow(QMainWindow):
         self.reader: SerialReader | None = None
         self.score = DEFAULT_INITIAL_SCORE
         self.winning_score = DEFAULT_WINNING_SCORE
+        self.active_target_spawn_interval_ms = DEFAULT_TARGET_SPAWN_INTERVAL_MS
         self.active_material_scores = dict(MATERIAL_SCORES)
         self.result_state: str | None = None
         self.game_active = False
@@ -370,6 +372,14 @@ class MoleGameWindow(QMainWindow):
             self.winning_score_box.addItem(f"{score}分", score)
         self.winning_score_box.setCurrentText(f"{DEFAULT_WINNING_SCORE}分")
         game_settings.addWidget(self.winning_score_box)
+        game_settings.addWidget(QLabel("生成间隔："))
+        self.target_spawn_interval_box = QComboBox()
+        for interval_ms in TARGET_SPAWN_INTERVAL_OPTIONS_MS:
+            self.target_spawn_interval_box.addItem(f"{interval_ms / 1000:.1f}秒", interval_ms)
+        self.target_spawn_interval_box.setCurrentIndex(
+            self.target_spawn_interval_box.findData(DEFAULT_TARGET_SPAWN_INTERVAL_MS)
+        )
+        game_settings.addWidget(self.target_spawn_interval_box)
         game_settings.addStretch(1)
         settings_layout.addLayout(game_settings)
 
@@ -441,6 +451,12 @@ class MoleGameWindow(QMainWindow):
         if type(winning_score) is int and winning_score in WINNING_SCORE_OPTIONS:
             self.winning_score_box.setCurrentIndex(self.winning_score_box.findData(winning_score))
 
+        target_spawn_interval_ms = self.saved_config.get("target_spawn_interval_ms")
+        if type(target_spawn_interval_ms) is int and target_spawn_interval_ms in TARGET_SPAWN_INTERVAL_OPTIONS_MS:
+            self.target_spawn_interval_box.setCurrentIndex(
+                self.target_spawn_interval_box.findData(target_spawn_interval_ms)
+            )
+
         material_scores = self.saved_config.get("material_scores")
         if isinstance(material_scores, dict):
             for material, score_box in self.material_score_boxes.items():
@@ -456,6 +472,7 @@ class MoleGameWindow(QMainWindow):
         self.port_box.currentTextChanged.connect(self.on_config_changed)
         self.initial_score_box.currentIndexChanged.connect(self.on_config_changed)
         self.winning_score_box.currentIndexChanged.connect(self.on_config_changed)
+        self.target_spawn_interval_box.currentIndexChanged.connect(self.on_config_changed)
         for score_box in self.material_score_boxes.values():
             score_box.currentIndexChanged.connect(self.on_config_changed)
 
@@ -472,6 +489,7 @@ class MoleGameWindow(QMainWindow):
         config = {
             "initial_score": int(self.initial_score_box.currentData()),
             "winning_score": int(self.winning_score_box.currentData()),
+            "target_spawn_interval_ms": int(self.target_spawn_interval_box.currentData()),
             "material_scores": {
                 material: int(score_box.currentData())
                 for material, score_box in self.material_score_boxes.items()
@@ -504,9 +522,10 @@ class MoleGameWindow(QMainWindow):
         self.material_settings_panel.setVisible(visible)
         self.material_settings_button.setText("药材分数设置 ▲" if visible else "药材分数设置 ▼")
 
-    def set_score_settings_enabled(self, enabled: bool) -> None:
+    def set_game_settings_enabled(self, enabled: bool) -> None:
         self.initial_score_box.setEnabled(enabled)
         self.winning_score_box.setEnabled(enabled)
+        self.target_spawn_interval_box.setEnabled(enabled)
         for score_box in self.material_score_boxes.values():
             score_box.setEnabled(enabled)
 
@@ -561,6 +580,7 @@ class MoleGameWindow(QMainWindow):
 
         self.score = initial_score
         self.winning_score = winning_score
+        self.active_target_spawn_interval_ms = int(self.target_spawn_interval_box.currentData())
         self.active_material_scores = {
             material: int(score_box.currentData())
             for material, score_box in self.material_score_boxes.items()
@@ -574,9 +594,9 @@ class MoleGameWindow(QMainWindow):
         self.score_label.show()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(True)
-        self.set_score_settings_enabled(False)
+        self.set_game_settings_enabled(False)
         self.spawn_target()
-        self.spawn_timer.start(TARGET_SPAWN_MS)
+        self.spawn_timer.start(self.active_target_spawn_interval_ms)
 
     def end_game(self) -> None:
         self.game_active = False
@@ -586,7 +606,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(True)
         self.end_button.setEnabled(False)
-        self.set_score_settings_enabled(True)
+        self.set_game_settings_enabled(True)
         self.grid.show_message("游戏结束")
 
     def finish_victory(self) -> None:
@@ -598,7 +618,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(False)
-        self.set_score_settings_enabled(False)
+        self.set_game_settings_enabled(False)
         self.grid.show_message("游戏胜利")
         self.victory_timer.start(VICTORY_DISPLAY_MS)
 
@@ -611,7 +631,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(False)
         self.end_button.setEnabled(False)
-        self.set_score_settings_enabled(False)
+        self.set_game_settings_enabled(False)
         self.grid.show_message("游戏失败")
         self.victory_timer.start(VICTORY_DISPLAY_MS)
 
@@ -626,7 +646,7 @@ class MoleGameWindow(QMainWindow):
         self.score_label.hide()
         self.start_button.setEnabled(True)
         self.end_button.setEnabled(False)
-        self.set_score_settings_enabled(True)
+        self.set_game_settings_enabled(True)
 
     def register_game_frame(self, values: list[int]) -> None:
         # The first complete frame after starting establishes the released/pressed
