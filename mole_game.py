@@ -9,6 +9,8 @@ signal keeps its corresponding square black for HIT_DISPLAY_MS milliseconds.
 
 from __future__ import annotations
 
+import json
+import os
 import queue
 import random
 import sys
@@ -57,6 +59,8 @@ TARGET_SPAWN_MS = 2000
 TARGET_DISPLAY_MS = 4000
 HIT_SCALE_DURATION_MS = 500
 ASSET_DIRECTORY = Path(__file__).with_name("素材")
+CONFIG_DIRECTORY_NAME = "MedicinalMoleGame"
+CONFIG_FILE_NAME = "settings.json"
 DIRECT_FAILURE_SCORE = -999
 MATERIAL_SCORE_OPTIONS = (DIRECT_FAILURE_SCORE, *range(-20, 0), *range(1, 21))
 MATERIAL_SCORES = {
@@ -76,6 +80,13 @@ MATERIAL_FILES = {
     "罂粟花": ASSET_DIRECTORY / "罂粟花.png",
     "大麻叶": ASSET_DIRECTORY / "大麻叶.png",
 }
+
+
+def default_config_path() -> Path:
+    """Return the current Windows user's fixed local settings path."""
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    base_directory = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
+    return base_directory / CONFIG_DIRECTORY_NAME / CONFIG_FILE_NAME
 
 
 class SerialReader(threading.Thread):
@@ -260,13 +271,18 @@ class SquareGrid(QWidget):
 
 
 class MoleGameWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, config_path: Path | None = None) -> None:
         super().__init__()
         self.setWindowTitle("打地鼠 — 六开关显示")
         self.resize(640, 900)
         self.setMinimumSize(420, 620)
 
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.config_path = config_path or default_config_path()
+        self.saved_config = self.load_config()
+        self.saved_port = ""
+        self._applying_config = True
+        self._refreshing_ports = False
         self.reader: SerialReader | None = None
         self.score = DEFAULT_INITIAL_SCORE
         self.winning_score = DEFAULT_WINNING_SCORE
@@ -278,8 +294,12 @@ class MoleGameWindow(QMainWindow):
         self.targets: list[str | None] = [None] * CHANNEL_COUNT
         self.target_expiry_timers: list[QTimer] = []
         self._build_ui()
+        self.apply_saved_config()
         self.grid.tile_clicked.connect(self.handle_tile_click)
         self.refresh_ports()
+        self.connect_config_signals()
+        self._applying_config = False
+        self.save_config()
 
         self.message_timer = QTimer(self)
         self.message_timer.timeout.connect(self.process_messages)
@@ -400,6 +420,75 @@ class MoleGameWindow(QMainWindow):
         self.grid = SquareGrid()
         layout.addWidget(self.grid, 1)
 
+    def load_config(self) -> dict[str, object]:
+        """Load a configuration file if it exists; malformed content uses defaults."""
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.config_path.exists():
+                return {}
+            loaded = json.loads(self.config_path.read_text(encoding="utf-8"))
+            return loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def apply_saved_config(self) -> None:
+        initial_score = self.saved_config.get("initial_score")
+        if type(initial_score) is int and initial_score in INITIAL_SCORE_OPTIONS:
+            self.initial_score_box.setCurrentIndex(self.initial_score_box.findData(initial_score))
+
+        winning_score = self.saved_config.get("winning_score")
+        if type(winning_score) is int and winning_score in WINNING_SCORE_OPTIONS:
+            self.winning_score_box.setCurrentIndex(self.winning_score_box.findData(winning_score))
+
+        material_scores = self.saved_config.get("material_scores")
+        if isinstance(material_scores, dict):
+            for material, score_box in self.material_score_boxes.items():
+                score = material_scores.get(material)
+                if type(score) is int and score in MATERIAL_SCORE_OPTIONS:
+                    score_box.setCurrentIndex(score_box.findData(score))
+
+        serial_port = self.saved_config.get("serial_port")
+        if isinstance(serial_port, str):
+            self.saved_port = serial_port
+
+    def connect_config_signals(self) -> None:
+        self.port_box.currentTextChanged.connect(self.on_config_changed)
+        self.initial_score_box.currentIndexChanged.connect(self.on_config_changed)
+        self.winning_score_box.currentIndexChanged.connect(self.on_config_changed)
+        for score_box in self.material_score_boxes.values():
+            score_box.currentIndexChanged.connect(self.on_config_changed)
+
+    def on_config_changed(self) -> None:
+        if self._applying_config or self._refreshing_ports:
+            return
+        selected_port = self.port_box.currentText()
+        if selected_port:
+            self.saved_port = selected_port
+        self.save_config()
+
+    def save_config(self) -> None:
+        """Persist all user-configurable values using an atomic local replacement."""
+        config = {
+            "initial_score": int(self.initial_score_box.currentData()),
+            "winning_score": int(self.winning_score_box.currentData()),
+            "material_scores": {
+                material: int(score_box.currentData())
+                for material, score_box in self.material_score_boxes.items()
+            },
+            "serial_port": self.saved_port,
+        }
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = self.config_path.with_suffix(".tmp")
+            temporary_path.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary_path.replace(self.config_path)
+        except OSError:
+            # A configuration write must never prevent the game window from running.
+            pass
+
     @staticmethod
     def material_score_label(score: int) -> str:
         if score == DIRECT_FAILURE_SCORE:
@@ -421,13 +510,17 @@ class MoleGameWindow(QMainWindow):
             score_box.setEnabled(enabled)
 
     def refresh_ports(self) -> None:
-        current = self.port_box.currentText()
+        current = self.port_box.currentText() or self.saved_port
         ports = [item.device for item in list_ports.comports()]
-        self.port_box.clear()
-        self.port_box.addItems(ports)
+        self._refreshing_ports = True
+        try:
+            self.port_box.clear()
+            self.port_box.addItems(ports)
 
-        if current in ports:
-            self.port_box.setCurrentText(current)
+            if current in ports:
+                self.port_box.setCurrentText(current)
+        finally:
+            self._refreshing_ports = False
 
         if not ports:
             self.status_label.setText("未发现串口。连接开发板后点击“刷新”。")

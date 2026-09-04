@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -20,6 +23,7 @@ from mole_game import (
     MoleGameWindow,
     SERIAL_TO_TILE_INDEX,
     SerialReader,
+    default_config_path,
 )
 from serial_signal_simulator import next_random_frame
 
@@ -30,10 +34,13 @@ class MoleGameLogicTests(unittest.TestCase):
         cls.application = QApplication.instance() or QApplication([])
 
     def setUp(self) -> None:
-        self.window = MoleGameWindow()
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.config_path = Path(self.temp_directory.name) / "settings.json"
+        self.window = MoleGameWindow(config_path=self.config_path)
 
     def tearDown(self) -> None:
         self.window.close()
+        self.temp_directory.cleanup()
 
     def start_with_zero_baseline(self) -> None:
         self.window.start_game()
@@ -80,6 +87,27 @@ class MoleGameLogicTests(unittest.TestCase):
             self.assertEqual(MATERIAL_SCORES[material], 10)
         self.assertEqual(MATERIAL_SCORES["大麻叶"], -5)
         self.assertEqual(MATERIAL_SCORES["罂粟花"], -999)
+
+    def test_default_config_path_is_absolute_and_not_tied_to_the_program_folder(self) -> None:
+        self.assertTrue(default_config_path().is_absolute())
+        self.assertNotEqual(default_config_path().parent, Path.cwd())
+
+    def test_config_file_is_created_updated_and_restored(self) -> None:
+        self.assertTrue(self.config_path.exists())
+        self.window.initial_score_box.setCurrentIndex(self.window.initial_score_box.findData(20))
+        self.window.winning_score_box.setCurrentIndex(self.window.winning_score_box.findData(50))
+        hemp_box = self.window.material_score_boxes["大麻叶"]
+        hemp_box.setCurrentIndex(hemp_box.findData(7))
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["initial_score"], 20)
+        self.assertEqual(saved["winning_score"], 50)
+        self.assertEqual(saved["material_scores"]["大麻叶"], 7)
+
+        self.window.close()
+        self.window = MoleGameWindow(config_path=self.config_path)
+        self.assertEqual(self.window.initial_score_box.currentData(), 20)
+        self.assertEqual(self.window.winning_score_box.currentData(), 50)
+        self.assertEqual(self.window.material_score_boxes["大麻叶"].currentData(), 7)
 
     def test_score_settings_are_collapsed_and_expose_the_exact_requested_options(self) -> None:
         self.assertTrue(self.window.settings_panel.isHidden())
