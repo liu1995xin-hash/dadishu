@@ -42,6 +42,10 @@ except ImportError as exc:
 BAUD_RATE = 115200
 CHANNEL_COUNT = 6
 HIT_SIGNAL = 1  # COM -> GND and NC -> Dx: released=0, struck/pressed=1
+# Serial values arrive in this physical order: bottom-right, bottom-left,
+# middle-right, middle-left, top-right, top-left.  Tile indices are laid out
+# visually from top-left to bottom-right, so serial positions map in reverse.
+SERIAL_TO_TILE_INDEX = (5, 4, 3, 2, 1, 0)
 DEFAULT_INITIAL_SCORE = 10
 DEFAULT_WINNING_SCORE = 30
 INITIAL_SCORE_OPTIONS = range(10, 101, 10)
@@ -443,9 +447,9 @@ class MoleGameWindow(QMainWindow):
             self.awaiting_first_frame = False
             return
 
-        for index, (previous, current) in enumerate(zip(self.previous_values, values)):
+        for serial_index, (previous, current) in enumerate(zip(self.previous_values, values)):
             if previous != HIT_SIGNAL and current == HIT_SIGNAL:
-                self.hit_target(index)
+                self.hit_target(SERIAL_TO_TILE_INDEX[serial_index])
                 if not self.game_active:
                     break
         self.previous_values = values

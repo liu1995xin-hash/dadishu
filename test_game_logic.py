@@ -16,6 +16,7 @@ from mole_game import (
     MATERIAL_FILES,
     MATERIAL_SCORES,
     MoleGameWindow,
+    SERIAL_TO_TILE_INDEX,
     SerialReader,
 )
 from serial_signal_simulator import next_random_frame
@@ -41,10 +42,26 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.targets[index] = material
         self.window.grid.show_asset(index, MATERIAL_FILES[material])
 
+    @staticmethod
+    def frame_with_hit_at_tile(index: int) -> list[int]:
+        values = [0] * CHANNEL_COUNT
+        values[SERIAL_TO_TILE_INDEX.index(index)] = HIT_SIGNAL
+        return values
+
     def test_frame_parser_rejects_incomplete_and_invalid_input(self) -> None:
         self.assertEqual(SerialReader.parse_frame("0 1 0 0 0 1"), [0, 1, 0, 0, 0, 1])
         for text in ("", "0 1 0", "0 1 0 0 0 2", "0 1 0 0 0 x"):
             self.assertIsNone(SerialReader.parse_frame(text))
+
+    def test_serial_input_order_maps_from_bottom_right_to_top_left(self) -> None:
+        self.assertEqual(SERIAL_TO_TILE_INDEX, (5, 4, 3, 2, 1, 0))
+        self.assertEqual(self.frame_with_hit_at_tile(5), [1, 0, 0, 0, 0, 0])
+        self.assertEqual(self.frame_with_hit_at_tile(0), [0, 0, 0, 0, 0, 1])
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(5, "黄芩")
+        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.assertIsNone(self.window.targets[5])
 
     def test_simulator_frames_are_six_bits_and_do_not_repeat_the_last_hit(self) -> None:
         last_hit: int | None = None
@@ -79,11 +96,12 @@ class MoleGameLogicTests(unittest.TestCase):
         self.start_with_zero_baseline()
         self.window.clear_all_targets()
         self.put_target(0, "黄芩")
-        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        top_left_hit = self.frame_with_hit_at_tile(0)
+        self.window.register_game_frame(top_left_hit)
         self.assertIsNone(self.window.targets[0])
-        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.window.register_game_frame(top_left_hit)
         self.window.register_game_frame([0, 0, 0, 0, 0, 0])
-        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.window.register_game_frame(top_left_hit)
         QTest.qWait(1100)
         self.assertEqual(self.window.score, 20)
 
@@ -91,7 +109,7 @@ class MoleGameLogicTests(unittest.TestCase):
         self.start_with_zero_baseline()
         self.window.clear_all_targets()
         self.put_target(0, "罂粟花")
-        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.window.register_game_frame(self.frame_with_hit_at_tile(0))
         self.assertFalse(self.window.game_active)
         self.assertEqual(self.window.grid.message_label.text(), "游戏失败")
         self.assertTrue(all(target is None for target in self.window.targets))
@@ -100,7 +118,7 @@ class MoleGameLogicTests(unittest.TestCase):
         self.start_with_zero_baseline()
         self.window.clear_all_targets()
         self.put_target(0, "大麻叶")
-        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.window.register_game_frame(self.frame_with_hit_at_tile(0))
         QTest.qWait(1100)
         self.assertEqual(self.window.score, 5)
 
