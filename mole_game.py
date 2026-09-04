@@ -19,7 +19,7 @@ from pathlib import Path
 try:
     import serial
     from serial.tools import list_ports
-    from PySide6.QtCore import QEasingCurve, QRect, QPropertyAnimation, QSequentialAnimationGroup, Qt, QTimer
+    from PySide6.QtCore import QEasingCurve, QRect, QPropertyAnimation, QSequentialAnimationGroup, Qt, QTimer, Signal
     from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
     from PySide6.QtWidgets import (
         QApplication,
@@ -117,6 +117,24 @@ class SerialReader(threading.Thread):
         return [int(part) for part in parts]
 
 
+class ClickableTile(QFrame):
+    """A grid tile that reports a left mouse-button click with its index."""
+
+    clicked = Signal(int)
+
+    def __init__(self, index: int, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.index = index
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.index)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class SquareGrid(QWidget):
     """A 2 x 3 area whose tiles remain square at every window size."""
 
@@ -124,17 +142,19 @@ class SquareGrid(QWidget):
         super().__init__()
         self.setMinimumSize(280, 420)
         self.setStyleSheet("background: white;")
-        self.tiles: list[QFrame] = []
+        self.tiles: list[ClickableTile] = []
         self.asset_labels: list[QLabel] = []
         self.asset_animations: list[QSequentialAnimationGroup | None] = [None] * CHANNEL_COUNT
 
         for _index in range(CHANNEL_COUNT):
-            tile = QFrame(self)
+            tile = ClickableTile(_index, self)
             tile.setStyleSheet("background: white;")
+            tile.clicked.connect(self.tile_clicked.emit)
             self.tiles.append(tile)
             asset_label = QLabel(tile)
             asset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             asset_label.setScaledContents(True)
+            asset_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             asset_label.setStyleSheet("background: transparent;")
             asset_label.hide()
             self.asset_labels.append(asset_label)
@@ -148,6 +168,8 @@ class SquareGrid(QWidget):
             "background: transparent; color: black; font-size: 36px; font-weight: bold;"
         )
         self.message_label.hide()
+
+    tile_clicked = Signal(int)
 
     def asset_rect(self, index: int, scale: float = 1.0) -> QRect:
         tile = self.tiles[index]
@@ -252,6 +274,7 @@ class MoleGameWindow(QMainWindow):
         self.targets: list[str | None] = [None] * CHANNEL_COUNT
         self.target_expiry_timers: list[QTimer] = []
         self._build_ui()
+        self.grid.tile_clicked.connect(self.handle_tile_click)
         self.refresh_ports()
 
         self.message_timer = QTimer(self)
@@ -453,6 +476,11 @@ class MoleGameWindow(QMainWindow):
                 if not self.game_active:
                     break
         self.previous_values = values
+
+    def handle_tile_click(self, index: int) -> None:
+        """Simulate a hit without changing the serial input baseline."""
+        if self.game_active:
+            self.hit_target(index)
 
     def spawn_target(self) -> None:
         if not self.game_active:

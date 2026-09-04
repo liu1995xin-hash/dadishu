@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
+from PySide6.QtCore import Qt
 
 from mole_game import (
     CHANNEL_COUNT,
@@ -105,6 +106,17 @@ class MoleGameLogicTests(unittest.TestCase):
         QTest.qWait(1100)
         self.assertEqual(self.window.score, 20)
 
+    def test_mouse_click_uses_the_same_target_hit_path(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "黄芩")
+        self.window.show()
+        QTest.qWait(20)
+        QTest.mouseClick(self.window.grid.tiles[0], Qt.MouseButton.LeftButton)
+        self.assertIsNone(self.window.targets[0])
+        QTest.qWait(1100)
+        self.assertEqual(self.window.score, 20)
+
     def test_poppy_hit_causes_immediate_failure(self) -> None:
         self.start_with_zero_baseline()
         self.window.clear_all_targets()
@@ -155,6 +167,11 @@ class MoleGameLogicTests(unittest.TestCase):
         self.assertEqual(self.window.grid.message_label.text(), "游戏结束")
         self.window.handle_spacebar()
         self.assertTrue(self.window.game_active)
+
+    def test_mouse_click_is_ignored_outside_an_active_game(self) -> None:
+        self.put_target(0, "黄芩")
+        self.window.handle_tile_click(0)
+        self.assertEqual(self.window.targets[0], "黄芩")
 
     def test_winning_score_shows_result_and_space_skips_to_ready(self) -> None:
         self.start_with_zero_baseline()
