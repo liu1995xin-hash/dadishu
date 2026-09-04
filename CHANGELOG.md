@@ -2,6 +2,13 @@
 
 本项目从 `v0.4.0` 起使用 Git 管理。每次功能变更应同时更新本文件、README 中的用户行为说明，并提交一个独立 Git 提交。
 
+## v0.6.8 — 缩短命中特效
+
+- 命中后放大与缩小阶段均调整为 0.3 秒，总特效时长为 0.6 秒。
+- 缩小动画结束时立即清除素材并恢复为空白格；自动化测试覆盖这一时点。
+
+对应代码：`mole_game.py` 的 `HIT_SCALE_DURATION_MS`、`SquareGrid.animate_hit()` 与 `MoleGameWindow.hit_target()`。
+
 ## v0.6.7 — 固定位置的本地配置记忆
 
 - 配置文件固定为当前 Windows 用户的 `%LOCALAPPDATA%\MedicinalMoleGame\settings.json`，不依赖 `.exe` 或项目文件夹位置。

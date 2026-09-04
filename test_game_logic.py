@@ -167,8 +167,9 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.register_game_frame(top_left_hit)
         self.window.register_game_frame([0, 0, 0, 0, 0, 0])
         self.window.register_game_frame(top_left_hit)
-        QTest.qWait(1100)
+        QTest.qWait(700)
         self.assertEqual(self.window.score, 20)
+        self.assertFalse(self.window.grid.asset_labels[0].isVisible())
 
     def test_mouse_click_uses_the_same_target_hit_path(self) -> None:
         self.start_with_zero_baseline()
@@ -178,8 +179,21 @@ class MoleGameLogicTests(unittest.TestCase):
         QTest.qWait(20)
         QTest.mouseClick(self.window.grid.tiles[0], Qt.MouseButton.LeftButton)
         self.assertIsNone(self.window.targets[0])
-        QTest.qWait(1100)
+        QTest.qWait(700)
         self.assertEqual(self.window.score, 20)
+        self.assertFalse(self.window.grid.asset_labels[0].isVisible())
+
+    def test_asset_is_cleared_when_the_0_6_second_hit_animation_finishes(self) -> None:
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "黄芩")
+        self.window.show()
+        QTest.qWait(20)
+        self.window.handle_tile_click(0)
+        QTest.qWait(450)
+        self.assertTrue(self.window.grid.asset_labels[0].isVisible())
+        QTest.qWait(250)
+        self.assertFalse(self.window.grid.asset_labels[0].isVisible())
 
     def test_poppy_hit_causes_immediate_failure(self) -> None:
         self.start_with_zero_baseline()
@@ -195,8 +209,9 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.clear_all_targets()
         self.put_target(0, "大麻叶")
         self.window.register_game_frame(self.frame_with_hit_at_tile(0))
-        QTest.qWait(1100)
+        QTest.qWait(700)
         self.assertEqual(self.window.score, 5)
+        self.assertFalse(self.window.grid.asset_labels[0].isVisible())
 
     def test_empty_cell_hit_does_not_change_score_or_show_an_asset(self) -> None:
         self.start_with_zero_baseline()
