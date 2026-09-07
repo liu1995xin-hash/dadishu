@@ -13,3 +13,5 @@ Thumbs.db
 *.log
 build/
 dist/
+.packaging_smoke_*/
+药材打地鼠.spec

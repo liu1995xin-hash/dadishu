@@ -14,6 +14,9 @@
 - `README.md`：面向普通用户的简短运行说明。
 - `使用说明.md`：面向学生和家长的完整操作与配置说明。
 - `开发板接线说明.md`：面向初次使用者的 Arduino Mega 2560 简版接线说明。
+- `mole_game.spec`：Windows 单文件版的精简 PyInstaller 配置。
+- `build_exe.ps1`：Windows EXE 重复打包脚本。
+- `requirements-build.txt`：打包工具的固定版本依赖。
 
 ## 2. 已确定、不可擅自改变的需求
 
@@ -191,9 +194,9 @@ python3 -m venv .venv
 
 ### 6.2 Windows 运行目标
 
-最终交付要求是在 Windows 上可运行。现阶段为跨平台 Python 源码交付，而非已打包的 `.exe`。
+已生成 Windows 10/11 64 位单文件 `dist\药材打地鼠.exe`。该文件内含 PySide6、pyserial 和全部六张药材图片，目标电脑无需 Python 和项目素材目录；运行时不显示命令行窗口。
 
-Windows 推荐流程：
+源码运行流程：
 
 ```bat
 py -m venv .venv
@@ -201,7 +204,16 @@ py -m venv .venv
 .venv\Scripts\python mole_game.py
 ```
 
-运行后点击“刷新”，在端口下拉框选择 Arduino 对应 `COMx`，再点击“连接”。未来需要独立安装包时，可在 Windows 上使用 PyInstaller 打包；打包需要在目标系统上执行，不能把 macOS 打包产物直接用于 Windows。
+运行后点击“刷新”，在端口下拉框选择 Arduino 对应 `COMx`，再点击“连接”。
+
+重复打包流程：
+
+```powershell
+.venv\Scripts\python -m pip install -r requirements-build.txt
+.\build_exe.ps1
+```
+
+打包机 PATH 中的 Poppler 带有与 Qt 不兼容的 `icuuc.dll` 和 `icudt78.dll`。`mole_game.spec` 会明确排除这两个文件，使 Qt 使用 Windows 10/11 自带的匹配 ICU；不要删除这一过滤规则。
 
 ## 7. 已完成验证
 
@@ -211,6 +223,7 @@ py -m venv .venv
 - Python 主程序已通过 `py_compile` 语法检查。
 - `pyserial` 和 PySide6 已在当前机器的独立虚拟环境内安装。
 - PySide6 版窗口已成功启动；Qt 的选择是为修复 tkinter 在本机 macOS 26 上无法启动的问题。
+- Windows 单文件版已在只含 EXE 的隔离目录中启动，确认无源码、Python环境或外部素材目录时可运行；六张内置素材均已核对，空格开始游戏后持续运行正常。
 
 ## 8. 当前未实现的功能与后续建议
 
@@ -222,7 +235,7 @@ py -m venv .venv
 - 窗口大小/位置设置与其他未明确提出的偏好持久化。
 - 串口断线后自动重连、连接质量/帧率指示。
 - 开关未连接/线缆断线的诊断。由于使用 NC，断线当前等价于 `1`（命中），不能无硬件辅助地可靠区分。
-- Windows `.exe` 打包、图标、安装器与代码签名。
+- Windows 安装器、自定义图标与代码签名。
 
 ## 9. 修改时的关键注意事项
 

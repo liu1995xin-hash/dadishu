@@ -2,6 +2,15 @@
 
 本项目从 `v0.4.0` 起使用 Git 管理。每次功能变更应同时更新本文件、README 中的用户行为说明，并提交一个独立 Git 提交。
 
+## v0.8.3 — Windows 单文件版
+
+- 使用 PyInstaller 生成无命令行窗口的 Windows 10/11 64 位单文件 EXE，内含 PySide6、pyserial 和六张药材素材；目标电脑无需安装 Python 或另外复制素材目录。
+- 新增可重复使用的 `mole_game.spec`、`build_exe.ps1` 和固定版本的 `requirements-build.txt`。
+- 打包配置仅保留游戏需要的 Qt Core、Gui、Widgets、Windows 平台及样式组件，并排除打包机 PATH 中与 Qt 不兼容的 Poppler ICU 文件。
+- 在只含 EXE 的隔离目录中验证界面启动、空格开始游戏和全部六张素材解包，自动化游戏逻辑测试保持通过。
+
+对应文件：`mole_game.spec`、`build_exe.ps1`、`requirements-build.txt`、`.gitignore`、`README.md`、`使用说明.md`、`PROGRAM_HANDOFF.md`。
+
 ## v0.8.2 — Arduino Mega 2560 简版接线说明
 
 - 新增面向初次使用者的 `开发板接线说明.md`，说明单个开关的 COM、NC 接法以及 NO 留空要求。

@@ -1,6 +1,6 @@
 # 六开关打地鼠显示（初版）
 
-当前版本：`v0.8.2`。第一次连接开发板请看 [开发板接线说明.md](开发板接线说明.md)，完整操作方法见 [使用说明.md](使用说明.md)，功能变更与代码位置见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：`v0.8.3`。第一次连接开发板请看 [开发板接线说明.md](开发板接线说明.md)，完整操作方法见 [使用说明.md](使用说明.md)，功能变更与代码位置见 [CHANGELOG.md](CHANGELOG.md)。
 
 这个程序会读取 Arduino Mega 2560 以 115200 波特率发送的六位状态，并显示一个可配置、可缩放的正方形格子区。界面采用 Qt（PySide6），可在当前 macOS 和 Windows 上运行。
 
@@ -14,6 +14,12 @@ Arduino 输出示例：
 ```text
 0 1 0 0 0 1
 ```
+
+## Windows 单文件版
+
+从 [GitHub v0.8.3 发布页](https://github.com/liu1995xin-hash/dadishu/releases/tag/v0.8.3) 下载 `药材打地鼠.exe` 后直接双击即可运行。另一台 Windows 10/11 64 位电脑不需要安装 Python，也不需要另外复制“素材”文件夹；PySide6、pyserial 和六张药材图片均已包含在这个 EXE 中。程序启动时不会显示黑色命令行窗口。
+
+连接开发板时，电脑仍需能够把 Arduino Mega 2560 识别为可用的 `COM` 串口。游戏配置继续保存在当前电脑的 `%LOCALAPPDATA%\MedicinalMoleGame\settings.json`，不会写在 EXE 旁边。
 
 ## macOS 运行
 
