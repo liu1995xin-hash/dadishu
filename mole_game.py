@@ -1,10 +1,10 @@
-"""Six-switch mole-game display.
+"""Six-signal medicinal-target mole game.
 
 The Arduino sends one line at a time, for example:
     0 1 0 0 0 1
 
-With COM + NC wiring, 0 means released and 1 means struck/pressed. Each hit
-signal keeps its corresponding square black for HIT_DISPLAY_MS milliseconds.
+Each complete frame contains six 0/1 signal groups. A saved, unique mapping
+routes each rising edge to one tile in the currently selected grid layout.
 """
 
 from __future__ import annotations
@@ -51,6 +51,21 @@ HIT_SIGNAL = 1  # COM -> GND and NC -> Dx: released=0, struck/pressed=1
 # middle-right, middle-left, top-right, top-left.  Tile indices are laid out
 # visually from top-left to bottom-right, so serial positions map in reverse.
 SERIAL_TO_TILE_INDEX = (5, 4, 3, 2, 1, 0)
+DEFAULT_GRID_LAYOUT = "2x3"
+GRID_LAYOUTS = {
+    "2x3": (2, 3),
+    "3x2": (3, 2),
+    "2x2": (2, 2),
+}
+PIN_GROUPS = (
+    (2, 3, 4, 5),
+    (6, 7, 8, 9),
+    (10, 11, 12, 13),
+    (22, 23, 24, 25),
+    (26, 27, 28, 29),
+    (30, 31, 32, 33),
+)
+DEFAULT_TILE_TO_SERIAL_INDEX = tuple(reversed(range(CHANNEL_COUNT)))
 DEFAULT_INITIAL_SCORE = 10
 DEFAULT_WINNING_SCORE = 30
 INITIAL_SCORE_OPTIONS = range(10, 101, 10)
@@ -165,22 +180,55 @@ class CurrentSelectionComboBox(QComboBox):
 
 
 class SquareGrid(QWidget):
-    """A 2 x 3 area whose tiles remain square at every window size."""
+    """A configurable grid whose tiles remain square at every window size."""
 
-    def __init__(self) -> None:
+    def __init__(self, columns: int = 2, rows: int = 3) -> None:
         super().__init__()
         self.setMinimumSize(280, 420)
         self.setStyleSheet("background: white;")
+        self.columns = columns
+        self.rows = rows
         self.tiles: list[ClickableTile] = []
         self.asset_labels: list[QLabel] = []
         self.score_change_labels: list[QLabel] = []
-        self.asset_animations: list[QSequentialAnimationGroup | None] = [None] * CHANNEL_COUNT
+        self.asset_animations: list[QSequentialAnimationGroup | None] = []
 
-        for _index in range(CHANNEL_COUNT):
-            tile = ClickableTile(_index, self)
+        # One border surrounds the complete grid; individual tiles have none.
+        self.outer_border = QFrame(self)
+        self.outer_border.setStyleSheet("background: transparent; border: 1px solid black;")
+        self.message_label = QLabel(self)
+        self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.message_label.setStyleSheet(
+            "background: transparent; color: black; font-size: 36px; font-weight: bold;"
+        )
+        self.message_label.hide()
+        self.set_layout(columns, rows)
+
+    tile_clicked = Signal(int)
+
+    def set_layout(self, columns: int, rows: int) -> None:
+        """Rebuild the tile widgets for a new ready-state layout."""
+        for animation in self.asset_animations:
+            if animation is not None:
+                animation.stop()
+                animation.deleteLater()
+        for tile in self.tiles:
+            tile.hide()
+            tile.deleteLater()
+
+        self.columns = columns
+        self.rows = rows
+        self.tiles = []
+        self.asset_labels = []
+        self.score_change_labels = []
+        self.asset_animations = [None] * (columns * rows)
+
+        for index in range(columns * rows):
+            tile = ClickableTile(index, self)
             tile.setStyleSheet("background: white;")
             tile.clicked.connect(self.tile_clicked.emit)
             self.tiles.append(tile)
+
             asset_label = QLabel(tile)
             asset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             asset_label.setScaledContents(True)
@@ -188,6 +236,7 @@ class SquareGrid(QWidget):
             asset_label.setStyleSheet("background: transparent;")
             asset_label.hide()
             self.asset_labels.append(asset_label)
+
             score_change_label = QLabel(tile)
             score_change_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             score_change_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -197,17 +246,7 @@ class SquareGrid(QWidget):
             score_change_label.hide()
             self.score_change_labels.append(score_change_label)
 
-        # One border surrounds the complete 2 x 3 area; individual tiles have none.
-        self.outer_border = QFrame(self)
-        self.outer_border.setStyleSheet("background: transparent; border: 1px solid black;")
-        self.message_label = QLabel(self)
-        self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.message_label.setStyleSheet(
-            "background: transparent; color: black; font-size: 36px; font-weight: bold;"
-        )
-        self.message_label.hide()
-
-    tile_clicked = Signal(int)
+        self._layout_tiles()
 
     def asset_rect(self, index: int, scale: float = 1.0) -> QRect:
         tile = self.tiles[index]
@@ -250,7 +289,7 @@ class SquareGrid(QWidget):
         self.score_change_labels[index].clear()
 
     def clear_all_assets(self) -> None:
-        for index in range(CHANNEL_COUNT):
+        for index in range(len(self.tiles)):
             self.clear_asset(index)
             self.clear_score_change(index)
 
@@ -283,20 +322,23 @@ class SquareGrid(QWidget):
 
     def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         super().resizeEvent(event)
+        self._layout_tiles()
+
+    def _layout_tiles(self) -> None:
         width, height = self.width(), self.height()
         margin = 18
         side = min(
-            (width - 2 * margin) / 2,
-            (height - 2 * margin) / 3,
+            (width - 2 * margin) / self.columns,
+            (height - 2 * margin) / self.rows,
         )
         side = max(int(side), 1)
-        grid_width = 2 * side
-        grid_height = 3 * side
+        grid_width = self.columns * side
+        grid_height = self.rows * side
         left = (width - grid_width) // 2
         top = (height - grid_height) // 2
 
         for index, tile in enumerate(self.tiles):
-            row, column = divmod(index, 2)
+            row, column = divmod(index, self.columns)
             tile.setGeometry(
                 left + column * side,
                 top + row * side,
@@ -325,6 +367,7 @@ class MoleGameWindow(QMainWindow):
         self.saved_port = ""
         self._applying_config = True
         self._refreshing_ports = False
+        self._updating_signal_mapping = False
         self.reader: SerialReader | None = None
         self.score = DEFAULT_INITIAL_SCORE
         self.winning_score = DEFAULT_WINNING_SCORE
@@ -334,23 +377,16 @@ class MoleGameWindow(QMainWindow):
         self.active_material_scores = dict(MATERIAL_SCORES)
         self.result_state: str | None = None
         self.game_active = False
+        self.grid_layout_key = DEFAULT_GRID_LAYOUT
+        self.tile_signal_indices = list(DEFAULT_TILE_TO_SERIAL_INDEX)
         self.previous_values = [0] * CHANNEL_COUNT
         self.awaiting_first_frame = True
-        self.targets: list[str | None] = [None] * CHANNEL_COUNT
+        self.targets: list[str | None] = [None] * len(self.tile_signal_indices)
         self.resolving_target_indices: set[int] = set()
         self.target_expiry_timers: list[QTimer] = []
-        self._build_ui()
-        self.apply_saved_config()
-        self.grid.tile_clicked.connect(self.handle_tile_click)
-        self.refresh_ports()
-        self.connect_config_signals()
-        self._applying_config = False
-        self.update_countdown_label(int(self.game_duration_box.currentData()))
-        self.save_config()
 
         self.message_timer = QTimer(self)
         self.message_timer.timeout.connect(self.process_messages)
-        self.message_timer.start(20)
         self.victory_timer = QTimer(self)
         self.victory_timer.setSingleShot(True)
         self.victory_timer.timeout.connect(self.reset_to_ready)
@@ -362,11 +398,17 @@ class MoleGameWindow(QMainWindow):
         self.space_shortcut.activated.connect(self.handle_spacebar)
         self.spawn_timer = QTimer(self)
         self.spawn_timer.timeout.connect(self.spawn_target)
-        for index in range(CHANNEL_COUNT):
-            timer = QTimer(self)
-            timer.setSingleShot(True)
-            timer.timeout.connect(lambda index=index: self.expire_target(index))
-            self.target_expiry_timers.append(timer)
+
+        self._build_ui()
+        self.apply_saved_config()
+        self.grid.tile_clicked.connect(self.handle_tile_click)
+        self.rebuild_target_expiry_timers(len(self.grid.tiles))
+        self.refresh_ports()
+        self.connect_config_signals()
+        self._applying_config = False
+        self.update_countdown_label(int(self.game_duration_box.currentData()))
+        self.save_config()
+        self.message_timer.start(20)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -448,6 +490,45 @@ class MoleGameWindow(QMainWindow):
         timing_settings.addStretch(1)
         settings_layout.addLayout(timing_settings)
 
+        layout_settings = QHBoxLayout()
+        layout_settings.addWidget(QLabel("界面布局："))
+        self.grid_layout_box = CurrentSelectionComboBox()
+        for layout_key, (columns, rows) in GRID_LAYOUTS.items():
+            self.grid_layout_box.addItem(f"横{columns}纵{rows}", layout_key)
+        self.grid_layout_box.setCurrentIndex(self.grid_layout_box.findData(DEFAULT_GRID_LAYOUT))
+        layout_settings.addWidget(self.grid_layout_box)
+        layout_settings.addStretch(1)
+        settings_layout.addLayout(layout_settings)
+
+        self.signal_mapping_button = QPushButton("格子信号设置 ▼")
+        self.signal_mapping_button.setCheckable(True)
+        self.signal_mapping_button.toggled.connect(self.toggle_signal_mapping_panel)
+        settings_layout.addWidget(self.signal_mapping_button)
+
+        self.signal_mapping_panel = QFrame()
+        self.signal_mapping_panel.setStyleSheet("background: white;")
+        signal_mapping_panel_layout = QVBoxLayout(self.signal_mapping_panel)
+        signal_mapping_panel_layout.setContentsMargins(0, 0, 0, 0)
+        signal_mapping_panel_layout.setSpacing(6)
+        self.signal_mapping_fields = QFrame()
+        self.signal_mapping_fields.setStyleSheet("background: white;")
+        self.signal_mapping_fields_layout = QGridLayout(self.signal_mapping_fields)
+        self.signal_mapping_fields_layout.setContentsMargins(0, 0, 0, 0)
+        self.signal_mapping_fields_layout.setHorizontalSpacing(12)
+        self.signal_mapping_fields_layout.setVerticalSpacing(6)
+        signal_mapping_panel_layout.addWidget(self.signal_mapping_fields)
+        self.save_signal_mapping_button = QPushButton("保存信号配置")
+        self.save_signal_mapping_button.clicked.connect(self.save_signal_mapping)
+        signal_mapping_panel_layout.addWidget(self.save_signal_mapping_button)
+        self.signal_mapping_status_label = QLabel()
+        self.signal_mapping_status_label.setWordWrap(True)
+        self.signal_mapping_status_label.setStyleSheet("color: #4d4d4d;")
+        signal_mapping_panel_layout.addWidget(self.signal_mapping_status_label)
+        self.signal_mapping_boxes: list[CurrentSelectionComboBox] = []
+        self.rebuild_signal_mapping_controls(self.tile_signal_indices)
+        self.signal_mapping_panel.hide()
+        settings_layout.addWidget(self.signal_mapping_panel)
+
         self.material_settings_button = QPushButton("药材分数设置 ▼")
         self.material_settings_button.setCheckable(True)
         self.material_settings_button.toggled.connect(self.toggle_material_settings_panel)
@@ -526,6 +607,23 @@ class MoleGameWindow(QMainWindow):
         if type(game_duration_seconds) is int and game_duration_seconds in GAME_DURATION_OPTIONS_SECONDS:
             self.game_duration_box.setCurrentIndex(self.game_duration_box.findData(game_duration_seconds))
 
+        grid_layout_key = self.saved_config.get("grid_layout")
+        if not isinstance(grid_layout_key, str) or grid_layout_key not in GRID_LAYOUTS:
+            grid_layout_key = DEFAULT_GRID_LAYOUT
+        columns, rows = GRID_LAYOUTS[grid_layout_key]
+        tile_count = columns * rows
+        saved_mapping = self.saved_config.get("tile_signal_mapping")
+        if self.is_valid_signal_mapping(saved_mapping, tile_count):
+            tile_signal_indices = [int(value) - 1 for value in saved_mapping]  # type: ignore[arg-type]
+        else:
+            tile_signal_indices = list(DEFAULT_TILE_TO_SERIAL_INDEX[:tile_count])
+        self.grid_layout_key = grid_layout_key
+        self.tile_signal_indices = tile_signal_indices
+        self.grid_layout_box.setCurrentIndex(self.grid_layout_box.findData(grid_layout_key))
+        self.grid.set_layout(columns, rows)
+        self.targets = [None] * tile_count
+        self.rebuild_signal_mapping_controls(tile_signal_indices)
+
         material_scores = self.saved_config.get("material_scores")
         if isinstance(material_scores, dict):
             for material, score_box in self.material_score_boxes.items():
@@ -543,6 +641,7 @@ class MoleGameWindow(QMainWindow):
         self.winning_score_box.currentIndexChanged.connect(self.on_config_changed)
         self.target_spawn_interval_box.currentIndexChanged.connect(self.on_config_changed)
         self.game_duration_box.currentIndexChanged.connect(self.on_config_changed)
+        self.grid_layout_box.currentIndexChanged.connect(self.on_grid_layout_changed)
         for score_box in self.material_score_boxes.values():
             score_box.currentIndexChanged.connect(self.on_config_changed)
 
@@ -556,13 +655,15 @@ class MoleGameWindow(QMainWindow):
             self.update_countdown_label(int(self.game_duration_box.currentData()))
         self.save_config()
 
-    def save_config(self) -> None:
+    def save_config(self) -> bool:
         """Persist all user-configurable values using an atomic local replacement."""
         config = {
             "initial_score": int(self.initial_score_box.currentData()),
             "winning_score": int(self.winning_score_box.currentData()),
             "target_spawn_interval_ms": int(self.target_spawn_interval_box.currentData()),
             "game_duration_seconds": int(self.game_duration_box.currentData()),
+            "grid_layout": self.grid_layout_key,
+            "tile_signal_mapping": [index + 1 for index in self.tile_signal_indices],
             "material_scores": {
                 material: int(score_box.currentData())
                 for material, score_box in self.material_score_boxes.items()
@@ -577,9 +678,10 @@ class MoleGameWindow(QMainWindow):
                 encoding="utf-8",
             )
             temporary_path.replace(self.config_path)
+            return True
         except OSError:
             # A configuration write must never prevent the game window from running.
-            pass
+            return False
 
     @staticmethod
     def material_score_label(score: int) -> str:
@@ -587,9 +689,132 @@ class MoleGameWindow(QMainWindow):
             return "-999（直接结束游戏）"
         return f"{score:+d}分"
 
+    @staticmethod
+    def is_valid_signal_mapping(mapping: object, tile_count: int) -> bool:
+        if not isinstance(mapping, list) or len(mapping) != tile_count:
+            return False
+        return (
+            all(type(value) is int and 1 <= value <= CHANNEL_COUNT for value in mapping)
+            and len(set(mapping)) == tile_count
+        )
+
+    @staticmethod
+    def signal_option_label(serial_index: int) -> str:
+        pins = "、".join(f"D{pin}" for pin in PIN_GROUPS[serial_index])
+        return f"第{serial_index + 1}位信号（{pins}）"
+
+    def tile_position_label(self, tile_index: int) -> str:
+        columns, _rows = GRID_LAYOUTS[self.grid_layout_key]
+        row, column = divmod(tile_index, columns)
+        return f"第{row + 1}行第{column + 1}列"
+
+    def rebuild_signal_mapping_controls(self, mapping: list[int]) -> None:
+        self._updating_signal_mapping = True
+        try:
+            while self.signal_mapping_fields_layout.count():
+                item = self.signal_mapping_fields_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            self.signal_mapping_boxes = []
+            for tile_index, serial_index in enumerate(mapping):
+                position_label = QLabel(f"{self.tile_position_label(tile_index)}：")
+                signal_box = CurrentSelectionComboBox()
+                signal_box.addItem("未配置（不读取）", None)
+                for option_serial_index in range(CHANNEL_COUNT):
+                    signal_box.addItem(
+                        self.signal_option_label(option_serial_index),
+                        option_serial_index,
+                    )
+                signal_box.setCurrentIndex(signal_box.findData(serial_index))
+                signal_box.currentIndexChanged.connect(
+                    lambda _selected_index, tile_index=tile_index: self.on_signal_mapping_changed(tile_index)
+                )
+                self.signal_mapping_fields_layout.addWidget(position_label, tile_index, 0)
+                self.signal_mapping_fields_layout.addWidget(signal_box, tile_index, 1)
+                self.signal_mapping_boxes.append(signal_box)
+        finally:
+            self._updating_signal_mapping = False
+
+    def on_signal_mapping_changed(self, changed_tile_index: int) -> None:
+        if self._applying_config or self._updating_signal_mapping:
+            return
+        selected_signal = self.signal_mapping_boxes[changed_tile_index].currentData()
+        cleared_position = ""
+        if selected_signal is not None:
+            self._updating_signal_mapping = True
+            try:
+                for tile_index, signal_box in enumerate(self.signal_mapping_boxes):
+                    if tile_index != changed_tile_index and signal_box.currentData() == selected_signal:
+                        signal_box.setCurrentIndex(0)
+                        cleared_position = self.tile_position_label(tile_index)
+                        break
+            finally:
+                self._updating_signal_mapping = False
+        if cleared_position:
+            self.signal_mapping_status_label.setText(
+                f"{cleared_position}的重复信号已取消。当前修改尚未保存。"
+            )
+        else:
+            self.signal_mapping_status_label.setText("当前信号修改尚未保存。")
+
+    def save_signal_mapping(self) -> None:
+        mapping = [signal_box.currentData() for signal_box in self.signal_mapping_boxes]
+        missing_positions = [
+            self.tile_position_label(tile_index)
+            for tile_index, serial_index in enumerate(mapping)
+            if serial_index is None
+        ]
+        if missing_positions:
+            self.signal_mapping_status_label.setText(
+                "无法保存，以下格子尚未配置信号：" + "、".join(missing_positions)
+            )
+            return
+        if len(set(mapping)) != len(mapping):
+            self.signal_mapping_status_label.setText("无法保存：不同格子不能使用同一个信号。")
+            return
+        self.tile_signal_indices = [int(serial_index) for serial_index in mapping]
+        if self.save_config():
+            self.signal_mapping_status_label.setText("信号配置已保存并生效。")
+        else:
+            self.signal_mapping_status_label.setText("信号配置已生效，但本地配置文件保存失败。")
+
+    def on_grid_layout_changed(self) -> None:
+        if self._applying_config or self.game_active:
+            return
+        layout_key = self.grid_layout_box.currentData()
+        if not isinstance(layout_key, str) or layout_key not in GRID_LAYOUTS:
+            return
+        self.clear_all_targets()
+        self.grid_layout_key = layout_key
+        columns, rows = GRID_LAYOUTS[layout_key]
+        tile_count = columns * rows
+        self.tile_signal_indices = list(DEFAULT_TILE_TO_SERIAL_INDEX[:tile_count])
+        self.grid.set_layout(columns, rows)
+        self.targets = [None] * tile_count
+        self.rebuild_target_expiry_timers(tile_count)
+        self.rebuild_signal_mapping_controls(self.tile_signal_indices)
+        self.signal_mapping_status_label.setText("界面布局已生效，信号映射已恢复为当前默认顺序。")
+        self.save_config()
+
+    def rebuild_target_expiry_timers(self, tile_count: int) -> None:
+        for timer in self.target_expiry_timers:
+            timer.stop()
+            timer.deleteLater()
+        self.target_expiry_timers = []
+        for index in range(tile_count):
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda index=index: self.expire_target(index))
+            self.target_expiry_timers.append(timer)
+
     def toggle_settings_panel(self, visible: bool) -> None:
         self.settings_panel.setVisible(visible)
         self.settings_button.setText("设置 ▲" if visible else "设置 ▼")
+
+    def toggle_signal_mapping_panel(self, visible: bool) -> None:
+        self.signal_mapping_panel.setVisible(visible)
+        self.signal_mapping_button.setText("格子信号设置 ▲" if visible else "格子信号设置 ▼")
 
     def toggle_material_settings_panel(self, visible: bool) -> None:
         self.material_settings_panel.setVisible(visible)
@@ -600,6 +825,10 @@ class MoleGameWindow(QMainWindow):
         self.winning_score_box.setEnabled(enabled)
         self.target_spawn_interval_box.setEnabled(enabled)
         self.game_duration_box.setEnabled(enabled)
+        self.grid_layout_box.setEnabled(enabled)
+        self.save_signal_mapping_button.setEnabled(enabled)
+        for signal_box in self.signal_mapping_boxes:
+            signal_box.setEnabled(enabled)
         for score_box in self.material_score_boxes.values():
             score_box.setEnabled(enabled)
 
@@ -762,7 +991,11 @@ class MoleGameWindow(QMainWindow):
 
         for serial_index, (previous, current) in enumerate(zip(self.previous_values, values)):
             if previous != HIT_SIGNAL and current == HIT_SIGNAL:
-                self.hit_target(SERIAL_TO_TILE_INDEX[serial_index])
+                try:
+                    tile_index = self.tile_signal_indices.index(serial_index)
+                except ValueError:
+                    continue
+                self.hit_target(tile_index)
                 if not self.game_active:
                     break
         self.previous_values = values
@@ -820,7 +1053,7 @@ class MoleGameWindow(QMainWindow):
         self.spawn_timer.stop()
         for timer in self.target_expiry_timers:
             timer.stop()
-        self.targets = [None] * CHANNEL_COUNT
+        self.targets = [None] * len(self.grid.tiles)
         self.resolving_target_indices.clear()
         self.grid.clear_all_assets()
 

@@ -17,13 +17,17 @@ from PySide6.QtCore import Qt
 
 from mole_game import (
     CHANNEL_COUNT,
+    DEFAULT_GRID_LAYOUT,
     DEFAULT_GAME_DURATION_SECONDS,
+    DEFAULT_TILE_TO_SERIAL_INDEX,
     GAME_DURATION_OPTIONS_SECONDS,
+    GRID_LAYOUTS,
     HIT_SIGNAL,
     MATERIAL_FILES,
     MATERIAL_SCORE_OPTIONS,
     MATERIAL_SCORES,
     MoleGameWindow,
+    PIN_GROUPS,
     SERIAL_TO_TILE_INDEX,
     SerialReader,
     TARGET_SPAWN_INTERVAL_OPTIONS_MS,
@@ -55,10 +59,9 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.targets[index] = material
         self.window.grid.show_asset(index, MATERIAL_FILES[material])
 
-    @staticmethod
-    def frame_with_hit_at_tile(index: int) -> list[int]:
+    def frame_with_hit_at_tile(self, index: int) -> list[int]:
         values = [0] * CHANNEL_COUNT
-        values[SERIAL_TO_TILE_INDEX.index(index)] = HIT_SIGNAL
+        values[self.window.tile_signal_indices[index]] = HIT_SIGNAL
         return values
 
     def test_frame_parser_rejects_incomplete_and_invalid_input(self) -> None:
@@ -68,6 +71,7 @@ class MoleGameLogicTests(unittest.TestCase):
 
     def test_serial_input_order_maps_from_bottom_right_to_top_left(self) -> None:
         self.assertEqual(SERIAL_TO_TILE_INDEX, (5, 4, 3, 2, 1, 0))
+        self.assertEqual(tuple(self.window.tile_signal_indices), DEFAULT_TILE_TO_SERIAL_INDEX)
         self.assertEqual(self.frame_with_hit_at_tile(5), [1, 0, 0, 0, 0, 0])
         self.assertEqual(self.frame_with_hit_at_tile(0), [0, 0, 0, 0, 0, 1])
         self.start_with_zero_baseline()
@@ -75,6 +79,133 @@ class MoleGameLogicTests(unittest.TestCase):
         self.put_target(5, "黄芩")
         self.window.register_game_frame([1, 0, 0, 0, 0, 0])
         self.assertIsNone(self.window.targets[5])
+
+    def test_layout_options_rebuild_the_grid_immediately_using_current_default_order(self) -> None:
+        self.window.show()
+        QTest.qWait(20)
+        self.assertEqual(self.window.grid_layout_key, DEFAULT_GRID_LAYOUT)
+        self.assertEqual(GRID_LAYOUTS, {"2x3": (2, 3), "3x2": (3, 2), "2x2": (2, 2)})
+        self.assertEqual(
+            [self.window.grid_layout_box.itemData(index) for index in range(self.window.grid_layout_box.count())],
+            ["2x3", "3x2", "2x2"],
+        )
+
+        self.window.grid_layout_box.setCurrentIndex(self.window.grid_layout_box.findData("3x2"))
+        self.assertEqual((self.window.grid.columns, self.window.grid.rows), (3, 2))
+        self.assertEqual(len(self.window.grid.tiles), 6)
+        self.assertEqual(self.window.tile_signal_indices, [5, 4, 3, 2, 1, 0])
+        self.assertTrue(all(tile.width() == tile.height() for tile in self.window.grid.tiles))
+        self.assertEqual(
+            self.window.grid.outer_border.width() * 2,
+            self.window.grid.outer_border.height() * 3,
+        )
+
+        self.window.grid_layout_box.setCurrentIndex(self.window.grid_layout_box.findData("2x2"))
+        self.assertEqual((self.window.grid.columns, self.window.grid.rows), (2, 2))
+        self.assertEqual(len(self.window.grid.tiles), 4)
+        self.assertEqual(len(self.window.targets), 4)
+        self.assertEqual(len(self.window.target_expiry_timers), 4)
+        self.assertEqual(self.window.tile_signal_indices, [5, 4, 3, 2])
+        self.assertEqual(len(self.window.signal_mapping_boxes), 4)
+        self.assertTrue(all(tile.width() == tile.height() for tile in self.window.grid.tiles))
+        self.assertEqual(self.window.grid.outer_border.width(), self.window.grid.outer_border.height())
+
+    def test_signal_options_include_pin_annotations(self) -> None:
+        self.assertEqual(
+            PIN_GROUPS,
+            (
+                (2, 3, 4, 5),
+                (6, 7, 8, 9),
+                (10, 11, 12, 13),
+                (22, 23, 24, 25),
+                (26, 27, 28, 29),
+                (30, 31, 32, 33),
+            ),
+        )
+        signal_box = self.window.signal_mapping_boxes[0]
+        self.assertEqual(signal_box.itemText(0), "未配置（不读取）")
+        self.assertEqual(signal_box.itemText(signal_box.findData(0)), "第1位信号（D2、D3、D4、D5）")
+        self.assertEqual(signal_box.itemText(signal_box.findData(5)), "第6位信号（D30、D31、D32、D33）")
+
+    def test_duplicate_signal_selection_clears_the_other_tile_and_requires_valid_save(self) -> None:
+        active_before = list(self.window.tile_signal_indices)
+        first_box, second_box = self.window.signal_mapping_boxes[:2]
+        first_box.setCurrentIndex(first_box.findData(4))
+        self.assertIsNone(second_box.currentData())
+        self.assertEqual(self.window.tile_signal_indices, active_before)
+        self.assertIn("重复信号已取消", self.window.signal_mapping_status_label.text())
+
+        self.window.save_signal_mapping_button.click()
+        self.assertEqual(self.window.tile_signal_indices, active_before)
+        self.assertIn("尚未配置信号", self.window.signal_mapping_status_label.text())
+
+        second_box.setCurrentIndex(second_box.findData(5))
+        self.window.save_signal_mapping_button.click()
+        self.assertEqual(self.window.tile_signal_indices, [4, 5, 3, 2, 1, 0])
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["tile_signal_mapping"], [5, 6, 4, 3, 2, 1])
+        self.assertEqual(self.window.signal_mapping_status_label.text(), "信号配置已保存并生效。")
+
+    def test_only_latest_layout_and_mapping_are_restored(self) -> None:
+        self.window.grid_layout_box.setCurrentIndex(self.window.grid_layout_box.findData("2x2"))
+        desired_mapping = [0, 1, 5, 4]
+        for signal_box, serial_index in zip(self.window.signal_mapping_boxes, desired_mapping):
+            signal_box.setCurrentIndex(signal_box.findData(serial_index))
+        self.window.save_signal_mapping_button.click()
+        self.assertEqual(self.window.tile_signal_indices, desired_mapping)
+
+        self.window.close()
+        self.window = MoleGameWindow(config_path=self.config_path)
+        self.assertEqual(self.window.grid_layout_key, "2x2")
+        self.assertEqual((self.window.grid.columns, self.window.grid.rows), (2, 2))
+        self.assertEqual(self.window.tile_signal_indices, desired_mapping)
+        self.assertEqual(
+            [signal_box.currentData() for signal_box in self.window.signal_mapping_boxes],
+            desired_mapping,
+        )
+
+    def test_invalid_saved_mapping_falls_back_to_the_current_default(self) -> None:
+        self.window.close()
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        saved["grid_layout"] = "2x2"
+        saved["tile_signal_mapping"] = [1, 1, 2, 3]
+        self.config_path.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+        self.window = MoleGameWindow(config_path=self.config_path)
+        self.assertEqual(self.window.grid_layout_key, "2x2")
+        self.assertEqual(self.window.tile_signal_indices, [5, 4, 3, 2])
+        repaired = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(repaired["tile_signal_mapping"], [6, 5, 4, 3])
+
+    def test_unmapped_serial_signal_is_ignored_in_a_four_tile_layout(self) -> None:
+        self.window.grid_layout_box.setCurrentIndex(self.window.grid_layout_box.findData("2x2"))
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "黄芩")
+        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.assertEqual(self.window.targets[0], "黄芩")
+        self.assertEqual(self.window.score, 10)
+
+    def test_saved_signal_mapping_changes_the_serial_hit_route(self) -> None:
+        self.window.grid_layout_box.setCurrentIndex(self.window.grid_layout_box.findData("2x2"))
+        desired_mapping = [0, 1, 5, 4]
+        for signal_box, serial_index in zip(self.window.signal_mapping_boxes, desired_mapping):
+            signal_box.setCurrentIndex(signal_box.findData(serial_index))
+        self.window.save_signal_mapping_button.click()
+        self.start_with_zero_baseline()
+        self.window.clear_all_targets()
+        self.put_target(0, "黄芩")
+        self.window.register_game_frame([1, 0, 0, 0, 0, 0])
+        self.assertIsNone(self.window.targets[0])
+
+    def test_layout_and_signal_mapping_controls_are_locked_during_a_game(self) -> None:
+        self.window.start_game()
+        self.assertFalse(self.window.grid_layout_box.isEnabled())
+        self.assertFalse(self.window.save_signal_mapping_button.isEnabled())
+        self.assertTrue(all(not signal_box.isEnabled() for signal_box in self.window.signal_mapping_boxes))
+        self.window.end_game()
+        self.assertTrue(self.window.grid_layout_box.isEnabled())
+        self.assertTrue(self.window.save_signal_mapping_button.isEnabled())
+        self.assertTrue(all(signal_box.isEnabled() for signal_box in self.window.signal_mapping_boxes))
 
     def test_simulator_frames_are_six_bits_and_do_not_repeat_the_last_hit(self) -> None:
         last_hit: int | None = None
@@ -111,6 +242,8 @@ class MoleGameLogicTests(unittest.TestCase):
         self.assertEqual(saved["winning_score"], 50)
         self.assertEqual(saved["target_spawn_interval_ms"], 3500)
         self.assertEqual(saved["game_duration_seconds"], 50)
+        self.assertEqual(saved["grid_layout"], "2x3")
+        self.assertEqual(saved["tile_signal_mapping"], [6, 5, 4, 3, 2, 1])
         self.assertEqual(saved["material_scores"]["大麻叶"], 7)
 
         self.window.close()
@@ -240,7 +373,7 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.register_game_frame(top_left_hit)
         self.window.register_game_frame([0, 0, 0, 0, 0, 0])
         self.window.register_game_frame(top_left_hit)
-        QTest.qWait(700)
+        QTest.qWait(900)
         self.assertEqual(self.window.score, 20)
         self.assertFalse(self.window.grid.asset_labels[0].isVisible())
 
@@ -252,7 +385,7 @@ class MoleGameLogicTests(unittest.TestCase):
         QTest.qWait(20)
         QTest.mouseClick(self.window.grid.tiles[0], Qt.MouseButton.LeftButton)
         self.assertIsNone(self.window.targets[0])
-        QTest.qWait(700)
+        QTest.qWait(900)
         self.assertEqual(self.window.score, 20)
         self.assertFalse(self.window.grid.asset_labels[0].isVisible())
 
@@ -279,7 +412,7 @@ class MoleGameLogicTests(unittest.TestCase):
         self.assertIsNone(self.window.targets[0])
         self.assertEqual(self.window.targets[1], "黄芩")
 
-        QTest.qWait(700)
+        QTest.qWait(900)
         self.assertNotIn(0, self.window.resolving_target_indices)
         with patch("mole_game.random.choice", side_effect=[0, "黄芩"]):
             self.window.spawn_target()
@@ -299,7 +432,7 @@ class MoleGameLogicTests(unittest.TestCase):
         self.window.clear_all_targets()
         self.put_target(0, "大麻叶")
         self.window.register_game_frame(self.frame_with_hit_at_tile(0))
-        QTest.qWait(700)
+        QTest.qWait(900)
         self.assertEqual(self.window.score, 5)
         self.assertFalse(self.window.grid.asset_labels[0].isVisible())
 
@@ -313,7 +446,7 @@ class MoleGameLogicTests(unittest.TestCase):
         feedback_label = self.window.grid.score_change_labels[0]
         self.assertTrue(feedback_label.isVisible())
         self.assertEqual(feedback_label.text(), "-5分")
-        QTest.qWait(700)
+        QTest.qWait(900)
         self.assertFalse(feedback_label.isVisible())
         self.assertEqual(self.window.score, 5)
 
