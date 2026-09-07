@@ -12,6 +12,7 @@
 - `serial_signal_simulator.py`：不接开发板时使用的六路随机串口信号发送程序。
 - `requirements.txt`：Python 依赖。
 - `README.md`：面向普通用户的简短运行说明。
+- `使用说明.md`：面向学生和家长的完整操作与配置说明。
 
 ## 2. 已确定、不可擅自改变的需求
 
