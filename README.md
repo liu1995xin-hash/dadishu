@@ -17,7 +17,7 @@ Arduino 输出示例：
 
 ## Windows 单文件版
 
-从 [GitHub v0.8.3 发布页](https://github.com/liu1995xin-hash/dadishu/releases/tag/v0.8.3) 下载 `药材打地鼠.exe` 后直接双击即可运行。另一台 Windows 10/11 64 位电脑不需要安装 Python，也不需要另外复制“素材”文件夹；PySide6、pyserial 和六张药材图片均已包含在这个 EXE 中。程序启动时不会显示黑色命令行窗口。
+从 [GitHub v0.8.3 发布页](https://github.com/liu1995xin-hash/dadishu/releases/tag/v0.8.3) 下载 `MedicinalMoleGame-v0.8.3-win64.exe` 后直接双击即可运行。另一台 Windows 10/11 64 位电脑不需要安装 Python，也不需要另外复制“素材”文件夹；PySide6、pyserial 和六张药材图片均已包含在这个 EXE 中。程序启动时不会显示黑色命令行窗口。
 
 连接开发板时，电脑仍需能够把 Arduino Mega 2560 识别为可用的 `COM` 串口。游戏配置继续保存在当前电脑的 `%LOCALAPPDATA%\MedicinalMoleGame\settings.json`，不会写在 EXE 旁边。
 
